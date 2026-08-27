@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """artefact-review - edit and comment on any Claude HTML artefact, locally.
 
-    python3 server.py <file.html> [--port 8790] [--author NAME]
+    python3 server.py <file.html> [--port 8790] [--author NAME] [--detach]
     python3 server.py --approve <cid>            apply a proposal from the CLI
     python3 server.py --status  <cid> <status> ["note"]
 
@@ -280,11 +280,15 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True})
 
 
-def watchdog(idle_timeout):
+def watchdog(idle_timeout, watch_parent=True):
     """Never leak a server: die when the launching process dies, or when no
     client has called for idle_timeout seconds. Borrowed from
-    paraschopra/make-pages-interactive, which gets this exactly right."""
-    watch_parent = INITIAL_PPID != 1
+    paraschopra/make-pages-interactive, which gets this exactly right.
+
+    Parent watching is skipped when the server was started detached (nohup,
+    disown, a launch agent), because there the parent is meant to go away.
+    """
+    watch_parent = watch_parent and INITIAL_PPID != 1
     while True:
         time.sleep(5)
         if watch_parent and os.getppid() == 1:
@@ -303,6 +307,7 @@ def main():
 
     # CLI verbs operate on a target given by --file, or the only .review/ found
     port, author, idle = 8790, os.environ.get("USER", "user"), 900
+    detach = False
     target = None
     rest = []
     i = 0
@@ -314,6 +319,8 @@ def main():
             author = args[i + 1]; i += 2
         elif a == "--idle-timeout":
             idle = int(args[i + 1]); i += 2
+        elif a == "--detach":
+            detach = True; i += 1
         elif a.startswith("--"):
             rest.append(a); i += 1
         elif target is None and a.endswith((".html", ".htm")):
@@ -350,9 +357,14 @@ def main():
     print(f"  units    : {len(units)} editable regions"
           + (f", {len(locked)} comment-only (script-generated)" if locked else ""))
     print(f"  review   : {store.dir}")
-    print(f"  shutdown : parent-death or {idle}s idle")
+    shutdown = []
+    if not detach:
+        shutdown.append("parent-death")
+    if idle > 0:
+        shutdown.append(f"{idle}s idle")
+    print(f"  shutdown : {' or '.join(shutdown) if shutdown else 'manual only'}")
 
-    threading.Thread(target=watchdog, args=(idle,), daemon=True).start()
+    threading.Thread(target=watchdog, args=(idle, not detach), daemon=True).start()
     HTTPServer(("127.0.0.1", port), Handler).serve_forever()
 
 
