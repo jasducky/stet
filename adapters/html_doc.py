@@ -1,0 +1,247 @@
+"""HTML adapter: turn a Claude HTML artefact into a list of editable units.
+
+The whole design rests on one question - what is an editable unit? Two obvious
+answers were tested against 12 real Claude artefacts and both failed:
+
+  * semantic block tags only  -> 0 units on a visual artefact written in divs
+  * any text-bearing leaf     -> 206 units on a prose page, 74 of them bare spans
+
+What works is collapsing inline elements into their parent, then taking the
+DEEPEST non-inline element that still holds text. Where the document has real
+semantic blocks that lands on <p>/<h3>/<li>; where it is all divs it lands on
+the innermost div. No tag whitelist needed.
+
+Units never nest, so one edit can never overlap another.
+
+Write-back replaces the unit's inner byte range in the ORIGINAL text. The
+document is never re-serialised: everything Claude wrote outside the edited
+span survives byte for byte, and git diffs stay readable.
+"""
+
+import re
+from html.parser import HTMLParser
+
+# Text inside these belongs to the parent, never to a unit of its own.
+INLINE = {
+    "span", "a", "em", "strong", "b", "i", "u", "s", "sup", "sub", "code",
+    "small", "mark", "abbr", "cite", "q", "kbd", "samp", "var", "time", "br",
+    "wbr", "img", "picture", "source",
+}
+
+# Never descended into, never editable.
+OPAQUE = {"script", "style", "svg", "canvas", "template", "head", "noscript", "iframe"}
+
+VOID = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+    "meta", "param", "source", "track", "wbr",
+}
+
+DOM_WRITE = re.compile(
+    r"\.(innerHTML|outerHTML|textContent|innerText)\s*=|insertAdjacentHTML|appendChild|replaceChildren"
+)
+
+
+class Unit:
+    """One editable region of the document.
+
+    span      (start, end) byte range of the whole element in the source
+    inner     (start, end) byte range of its contents, which is what gets edited
+    editable  False when the tool cannot honestly persist an edit
+    reason    why not, shown in the UI
+    """
+
+    __slots__ = ("id", "tag", "span", "inner", "editable", "reason", "depth")
+
+    def __init__(self, uid, tag, span, inner, depth):
+        self.id = uid
+        self.tag = tag
+        self.span = span
+        self.inner = inner
+        self.depth = depth
+        self.editable = True
+        self.reason = ""
+
+    def raw(self, text):
+        return text[self.inner[0]:self.inner[1]]
+
+    def to_json(self, text):
+        return {
+            "id": self.id,
+            "tag": self.tag,
+            "raw": self.raw(text),
+            "editable": self.editable,
+            "reason": self.reason,
+        }
+
+
+class _Node:
+    __slots__ = ("tag", "start", "inner_start", "inner_end", "end",
+                 "children", "has_text", "attrs", "parent")
+
+    def __init__(self, tag, start, inner_start, attrs, parent):
+        self.tag = tag
+        self.start = start
+        self.inner_start = inner_start
+        self.inner_end = None
+        self.end = None
+        self.attrs = attrs
+        self.children = []
+        self.has_text = False
+        self.parent = parent
+
+
+class _Builder(HTMLParser):
+    """Builds a tree with exact byte offsets for every element."""
+
+    def __init__(self, text):
+        super().__init__(convert_charrefs=True)
+        self.text = text
+        # line -> absolute offset, so getpos() converts to a byte index
+        self._line_off = [0]
+        for line in text.splitlines(keepends=True):
+            self._line_off.append(self._line_off[-1] + len(line))
+        self.root = _Node("#document", 0, 0, [], None)
+        self.stack = [self.root]
+        self.opaque_depth = 0
+        self._opaque_tag = None
+        self._opaque_inner = 0
+        self.scripts = []
+
+    def _off(self):
+        line, col = self.getpos()
+        return self._line_off[line - 1] + col
+
+    def handle_starttag(self, tag, attrs):
+        if self.opaque_depth:
+            return
+        if tag in OPAQUE:
+            self.opaque_depth = 1
+            self._opaque_tag = tag
+            self._opaque_inner = self._off() + len(self.get_starttag_text() or "")
+            return
+        if tag in VOID:
+            return
+        start = self._off()
+        inner_start = start + len(self.get_starttag_text() or "")
+        node = _Node(tag, start, inner_start, attrs, self.stack[-1])
+        self.stack[-1].children.append(node)
+        self.stack.append(node)
+
+    def handle_startendtag(self, tag, attrs):
+        return  # self-closing: no contents, never a unit
+
+    def handle_endtag(self, tag):
+        if self.opaque_depth:
+            if tag == self._opaque_tag:
+                self.opaque_depth = 0
+                if tag == "script":
+                    self.scripts.append(self.text[self._opaque_inner:self._off()])
+            return
+        if tag in VOID:
+            return
+        # tolerate unclosed tags: unwind to the matching open element if any
+        for i in range(len(self.stack) - 1, 0, -1):
+            if self.stack[i].tag == tag:
+                close = self._off()
+                for node in self.stack[i:]:
+                    if node.inner_end is None:
+                        node.inner_end = close
+                        node.end = close + len(tag) + 3
+                del self.stack[i:]
+                return
+
+    def handle_data(self, data):
+        if self.opaque_depth or not data.strip():
+            return
+        self.stack[-1].has_text = True
+
+
+def _subtree_has_text(node):
+    if node.has_text:
+        return True
+    return any(_subtree_has_text(c) for c in node.children)
+
+
+def _collect(node, out, depth=0):
+    """Deepest non-inline element holding text, inline collapsed into parents.
+
+    Returns True when this subtree yielded at least one unit, so a parent knows
+    its children already cover it. Units therefore never nest.
+    """
+    covered = False
+    for child in node.children:
+        if child.tag in INLINE:
+            # inline text belongs to this node, not to a unit of its own
+            if _subtree_has_text(child):
+                node.has_text = True
+            continue
+        if _collect(child, out, depth + 1):
+            covered = True
+
+    if covered:
+        return True
+    if node.tag == "#document":
+        return False
+    if not _subtree_has_text(node):
+        return False
+    if node.inner_end is None:
+        return False
+    out.append((node, depth))
+    return True
+
+
+def _script_locked_ids(scripts, text):
+    """Ids a script writes into. Their contents do not live in the file, so an
+    edit could not be persisted - they are comment-only by design."""
+    doc_ids = set(re.findall(r'\bid\s*=\s*["\']([^"\']+)["\']', text))
+    locked = set()
+    for src in scripts:
+        if not DOM_WRITE.search(src):
+            continue
+        for literal in re.findall(r'["\']([A-Za-z0-9_-]{2,64})["\']', src):
+            if literal in doc_ids:
+                locked.add(literal)
+    return locked
+
+
+def parse(text):
+    """text -> [Unit], in document order."""
+    b = _Builder(text)
+    b.feed(text)
+    b.close()
+    for node in b.stack[1:]:  # anything still open at EOF
+        if node.inner_end is None:
+            node.inner_end = node.end = len(text)
+
+    raw = []
+    _collect(b.root, raw)
+    raw.sort(key=lambda nd: nd[0].start)
+
+    locked = _script_locked_ids(b.scripts, text)
+    units = []
+    for i, (node, depth) in enumerate(raw):
+        u = Unit(f"u{i:03d}", node.tag, (node.start, node.end),
+                 (node.inner_start, node.inner_end), depth)
+        anc, hit = node, None
+        while anc is not None:
+            aid = dict(anc.attrs or []).get("id")
+            if aid and aid in locked:
+                hit = aid
+                break
+            anc = anc.parent
+        if hit:
+            u.editable = False
+            u.reason = f"built by script (#{hit}) - comment only"
+        units.append(u)
+    return units
+
+
+def write(text, units, unit_id, new_inner):
+    """Replace one unit's contents by byte range. Returns the new document."""
+    for u in units:
+        if u.id == unit_id:
+            if not u.editable:
+                raise ValueError(f"{unit_id} is not editable: {u.reason}")
+            s, e = u.inner
+            return text[:s] + new_inner + text[e:]
+    raise KeyError(unit_id)
