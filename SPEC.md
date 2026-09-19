@@ -379,7 +379,19 @@ surface; see *The agent's turn* below for the loop that defines it.
   action, determined by comparing against `--as`. Suppression happens **on read, never on write**:
   every event is always written to the stream.
 
-> **Known defect (R4.6).** `/__reply` **and `/__edit`** both test `who != "Claude"` and suppress the
+> **RESOLVED 19 September 2026.** R4.6's write-time suppression removed by U10, and `watch.py` built
+> by U11. `append_inbox` now takes the author as a required positional argument, so a call site
+> cannot omit it, and suppression happens on read against `--as`.
+>
+> **Where the cursor lives, and why.** `watch.py` writes events to stdout, byte-for-byte as the
+> server wrote them, and the cursor to stderr as a single `{"cursor": "<n>"}` line on every run.
+> R4.2 (every line is an event) and R4.3 (every response carries a cursor) pull against each other
+> on one stream; splitting them by job satisfies both and leaves no trailer for a consumer to
+> special-case. The cursor counts events *consumed*, not events returned, and is a position in the
+> stream rather than server-process state - which is what makes it survive a restart, asserted
+> against a real restart rather than a simulated one.
+>
+> **Known defect (R4.6), now fixed.** `/__reply` **and `/__edit`** both tested `who != "Claude"` and suppressed the
 > **inbox append itself** (`server.py:216`, `server.py:266`). A direct agent edit therefore produces
 > no inbox event at all, so R4.4 is false today for the highest-stakes event type. The edit is still
 > recorded in `edits.md`, so it is not untracked, but no watcher, audit pass or reconnecting agent

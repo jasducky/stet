@@ -586,6 +586,181 @@ def main():
               len(cli_events) > 0 and all(e.get("author") for e in cli_events),
               f"{len(cli_events)} events")
 
+        print("\n9. watch.py: the agent's turn, as a command (R4.1-R4.6)")
+
+        def watch(ident, since="0", timeout=6, wait=True):
+            """Run watch.py. Returns (events, cursor, returncode)."""
+            r = subprocess.run(
+                [sys.executable, str(ROOT / "watch.py"), str(target),
+                 "--as", ident, "--since", str(since),
+                 "--timeout", str(timeout), "--poll", "0.05"],
+                capture_output=True, text=True, timeout=timeout + 20)
+            evs = [json.loads(l) for l in r.stdout.splitlines() if l.strip()]
+            cur = None
+            for l in r.stderr.splitlines():
+                try:
+                    cur = json.loads(l).get("cursor")
+                except json.JSONDecodeError:
+                    pass
+            return evs, cur, r.returncode
+
+        # where the stream currently is
+        inbox_now = len((TMP / ".review" / target.stem / "inbox.jsonl")
+                        .read_text().strip().splitlines())
+
+        # (a) blocks, then returns when an event is appended
+        w = subprocess.Popen(
+            [sys.executable, str(ROOT / "watch.py"), str(target),
+             "--as", "Claude", "--since", str(inbox_now),
+             "--timeout", "15", "--poll", "0.05"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(0.6)
+        check("a. it is still blocking with nothing to report", w.poll() is None)
+        live_unit = next(u for u in call("/__units")
+                         if u["editable"] and len(u["raw"].strip()) > 60)
+        call("/__comment", {"unit": live_unit["id"], "quote": "",
+                            "comment": "wake the watcher"})
+        out, err = w.communicate(timeout=20)
+        evs = [json.loads(l) for l in out.splitlines() if l.strip()]
+        check("a. it returned once an event was appended", w.returncode == 0)
+        check("a. and returned the event", any(e["type"] == "comment" for e in evs),
+              str([e["type"] for e in evs]))
+
+        # (b) R4.2: each stdout line has the SAME KEYS as its inbox.jsonl line
+        raw_lines = (TMP / ".review" / target.stem / "inbox.jsonl") \
+            .read_text().strip().splitlines()
+        by_shape = {}
+        for rl in raw_lines:
+            o = json.loads(rl)
+            by_shape.setdefault((o["type"], o.get("at")), o)
+        shape_ok, shape_why = True, ""
+        for e in evs:
+            src = by_shape.get((e["type"], e.get("at")))
+            if src is None or set(src.keys()) != set(e.keys()):
+                shape_ok = False
+                shape_why = f"{e['type']}: {sorted(e.keys())} vs " \
+                            f"{sorted(src.keys()) if src else 'missing'}"
+                break
+        check("b. every output line carries the same keys as its inbox line",
+              shape_ok and len(evs) > 0, shape_why or f"{len(evs)} events")
+
+        # watch.py claims to print the line VERBATIM, so that is what is checked,
+        # not merely that the keys survived. Re-serialising would reorder keys
+        # and quietly change the shape an integration was written against.
+        raw_set = {l.strip() for l in raw_lines}
+        printed = [l for l in out.splitlines() if l.strip()]
+        check("b. and is byte-for-byte the line the server wrote",
+              len(printed) > 0 and all(l in raw_set for l in printed),
+              f"{len(printed)} lines")
+        check("b. stdout carries events only, no trailer to special-case",
+              all("cursor" not in e for e in evs))
+
+        cursor_after_a = None
+        for l in err.splitlines():
+            try:
+                cursor_after_a = json.loads(l).get("cursor")
+            except json.JSONDecodeError:
+                pass
+        check("b. the cursor came back on stderr", cursor_after_a is not None,
+              str(cursor_after_a))
+
+        # (c) cursor round trip: three events while disconnected -> exactly three
+        for i in range(3):
+            call("/__comment", {"unit": live_unit["id"], "quote": "",
+                                "comment": f"while disconnected {i}"})
+        evs3, cur3, rc3 = watch("Claude", since=cursor_after_a, timeout=6)
+        check("c. reconnecting returns exactly the three missed events",
+              len(evs3) == 3, f"{len(evs3)}: {[e.get('comment') for e in evs3]}")
+        evs_again, cur_again, _ = watch("Claude", since=cur3, timeout=1)
+        check("c. and they are not returned a second time", len(evs_again) == 0,
+              str(len(evs_again)))
+
+        # (d) the cursor survives a server restart
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        proc2 = subprocess.Popen(
+            [sys.executable, str(ROOT / "server.py"), str(target),
+             "--port", str(PORT), "--author", "Julia", "--idle-timeout", "0"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for _ in range(60):
+            try:
+                call("/info"); break
+            except Exception:
+                time.sleep(0.1)
+        page3 = call("/")
+        TOKEN = _read_token(page3)
+        globals()["TOKEN"] = TOKEN
+        unit2 = next(u for u in call("/__units")
+                     if u["editable"] and len(u["raw"].strip()) > 60)
+        call("/__comment", {"unit": unit2["id"], "quote": "",
+                            "comment": "after the restart"})
+        evsR, curR, _ = watch("Claude", since=cur_again, timeout=6)
+        check("d. a cursor from before the restart still resumes",
+              any(e.get("comment") == "after the restart" for e in evsR),
+              str([e.get("comment") for e in evsR]))
+        check("d. and returns only what came after it", len(evsR) == 1, str(len(evsR)))
+        proc = proc2                      # so the outer finally tears down the right one
+
+        # (e) --as does not return that identity's own events, and they ARE in the file
+        base_cursor = curR
+        kinds_written = []
+        cid_w = call("/__comment", {"unit": unit2["id"], "quote": "",
+                                    "comment": "claude comment", "author": "Claude"})["id"]
+        kinds_written.append("comment")
+        call("/__edit", {"id": unit2["id"], "text": "CLAUDE EDIT FOR WATCH",
+                         "author": "Claude"})
+        kinds_written.append("edit")
+        call("/__reply", {"id": cid_w, "text": "claude reply", "author": "Claude"})
+        kinds_written.append("reply")
+        u3 = next(u for u in call("/__units")
+                  if u["editable"] and len(u["raw"].strip()) > 60)
+        call("/__propose", {"id": cid_w, "unit": u3["id"], "text": "CLAUDE PROPOSAL"})
+        call("/__approve", {"id": cid_w, "author": "Claude"})
+        kinds_written.append("approved")
+        cid_w2 = call("/__comment", {"unit": u3["id"], "quote": "",
+                                     "comment": "to reject", "author": "Claude"})["id"]
+        call("/__propose", {"id": cid_w2, "unit": u3["id"], "text": "X"})
+        call("/__reject", {"id": cid_w2, "reason": "no", "author": "Claude"})
+        kinds_written.append("rejected")
+
+        tail = [json.loads(l) for l in
+                (TMP / ".review" / target.stem / "inbox.jsonl")
+                .read_text().strip().splitlines()[int(base_cursor):]]
+        in_file = {e["type"] for e in tail if e.get("author") == "Claude"}
+        check("e. all five event types were written by Claude to the file",
+              in_file >= {"comment", "edit", "reply", "approved", "rejected"},
+              str(sorted(in_file)))
+        evsC, curC, _ = watch("Claude", since=base_cursor, timeout=2)
+        check("e. and watch --as Claude returns none of them",
+              not any(e.get("author") == "Claude" for e in evsC),
+              str([(e["type"], e.get("author")) for e in evsC]))
+
+        # The cursor must move PAST its own events, not sit before them. If it
+        # does not, the agent re-scans the same batch on every reconnect for
+        # ever - which is the loop suppression exists to prevent, arrived at
+        # from the other direction. Returning nothing looks identical either
+        # way, so only the cursor shows the difference.
+        check("e. and the cursor advanced past them, so they are not re-scanned",
+              curC is not None and int(curC) > int(base_cursor),
+              f"{curC} vs {base_cursor}")
+        evsJ, curJ, _ = watch("Julia", since=base_cursor, timeout=2)
+        check("e. while --as Julia does see them",
+              {e["type"] for e in evsJ if e.get("author") == "Claude"}
+              >= {"comment", "edit", "reply", "approved", "rejected"},
+              str(sorted({e["type"] for e in evsJ})))
+
+        # (f) timeout returns empty plus the unchanged cursor
+        t0 = time.monotonic()
+        evsT, curT, rcT = watch("Julia", since=curJ, timeout=1)
+        elapsed = time.monotonic() - t0
+        check("f. a timeout returns no events", len(evsT) == 0, str(len(evsT)))
+        check("f. with the cursor unchanged", curT == curJ, f"{curT} vs {curJ}")
+        check("f. exit 0, because a quiet period is not an error", rcT == 0)
+        check("f. and it actually waited", elapsed >= 0.9, f"{elapsed:.2f}s")
+
     finally:
         proc.terminate()
         try:
