@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Depot status — visual artefact example</title>
+<style>
+  body { margin: 0; font-family: "Helvetica Neue", Arial, sans-serif; background: #f4f6f4;
+         color: #16221c; }
+  .card { width: 560px; margin: 56px auto; background: #fff; padding: 36px;
+          border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+  .eyebrow { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #7d8a82; }
+  .headline { font-size: 27px; font-weight: 700; margin: 10px 0 6px; line-height: 1.2; }
+  .sub { color: #5d6b62; font-size: 15px; line-height: 1.5; }
+  .row { display: flex; gap: 16px; margin-top: 28px; }
+  .stat { flex: 1; border: 1px solid #e4e8e4; border-radius: 5px; padding: 16px; }
+  .stat-n { font-size: 26px; font-weight: 700; }
+  .stat-l { font-size: 12px; color: #7d8a82; margin-top: 4px; }
+  .foot { margin-top: 26px; font-size: 12px; color: #7d8a82; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="eyebrow">Northwick Analytics · period 9</div>
+    <div class="headline">The average hid four handovers a week</div>
+    <div class="sub">A second worked example, built entirely from divs with no semantic text
+    elements anywhere. This is the case a tag whitelist finds nothing in, and it is why regions are
+    found by collapsing inline elements rather than by a list of tags.</div>
+
+    <div class="row">
+      <div class="stat">
+        <div class="stat-n">38m</div>
+        <div class="stat-l">median handover</div>
+      </div>
+      <div class="stat">
+        <div class="stat-n">6h 10m</div>
+        <div class="stat-l">longest this period</div>
+      </div>
+      <div class="stat">
+        <div class="stat-n">41%</div>
+        <div class="stat-l">logged twice</div>
+      </div>
+    </div>
+
+    <div class="foot">Every figure is invented. Northwick Analytics is a fictional company, and this
+    file exists only as an example document to run the tool against.</div>
+  </div>
+</body>
+</html>
