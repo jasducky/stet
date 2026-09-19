@@ -12,6 +12,13 @@
 }
 .rv-bar b { letter-spacing: .13em; font-size: 11px; color: #7fd4c1; }
 .rv-bar .rv-doc { color: #9aa3ad; font-weight: 400; }
+/* R1.5 notice: the document's own scripts are blocked while under review. */
+.rv-bar .rv-noscript {
+  font-weight: 400; font-size: 11px; letter-spacing: .04em;
+  color: #ffd9a8; background: rgba(255,170,60,.16);
+  border: 1px solid rgba(255,170,60,.42);
+  padding: 2px 8px; border-radius: 10px; cursor: help;
+}
 .rv-bar button {
   background: #232a32; color: #e8eaed; border: 1px solid #333c46; border-radius: 5px;
   padding: 5px 10px; font: inherit; cursor: pointer;

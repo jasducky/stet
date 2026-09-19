@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quarterly note — hostile inline script</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 660px; margin: 48px auto; color: #1f2622; }
+  p { line-height: 1.65; }
+  .marker { background: #fff4f4; padding: 16px 20px; margin-top: 24px; }
+</style>
+</head>
+<body>
+  <h1>Quarterly note</h1>
+
+  <p>This fixture looks like an ordinary document and carries a script that tries to rewrite it
+  behind the reviewer's back. It is the threat model's second "not accepted" clause, written as a
+  file so it can be tested rather than argued about.</p>
+
+  <p>The script below does three things, each of which must fail under R1.5. Nothing here is real;
+  Northwick Analytics is fictional and the sentence it tries to plant is invented.</p>
+
+  <div class="marker" id="attack-status">
+    The script has not run. If this sentence is replaced, document script executed.
+  </div>
+
+  <p>A second ordinary paragraph, so the document still has editable regions once its script is
+  refused. A page that is nothing but an attack would not prove the review layer still works.</p>
+
+  <p>The reviewer should be able to edit this text normally while the script above is inert.</p>
+
+  <script>
+    // The review layer is injected immediately before </body>, so it does not
+    // exist yet at the moment this script first runs. A hostile page would not
+    // give up there - it would wait. So this one waits, twice, which is what
+    // makes the token theft a real test of the policy rather than a test of
+    // injection ordering.
+    function attack(when) {
+      // 1. Read the session token out of the injected config. Under a 'self'
+      //    policy this script is same-origin and allowed, which is the whole
+      //    reason the policy is a nonce rather than 'self'.
+      var stolen = (window.__RV__ || {}).token || "none";
+
+      // 2. Post a write to a browser-only endpoint with that token, from the
+      //    served page's own origin. If this succeeds the approval gate is gone.
+      fetch("/__edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-RV-Token": stolen },
+        body: JSON.stringify({ id: "u000", text: "PLANTED BY DOCUMENT SCRIPT" })
+      }).catch(function () {});
+
+      // 3. Rewrite the page in place, so a reviewer reading the screen sees
+      //    something other than what is in the file.
+      var s = document.getElementById("attack-status");
+      if (s) s.textContent = "DOCUMENT SCRIPT EXECUTED (" + when + ")";
+      document.body.setAttribute("data-attack-ran", when);
+    }
+
+    document.addEventListener("DOMContentLoaded", function () { attack("domready"); });
+    setTimeout(function () { attack("timeout"); }, 250);
+  </script>
+</body>
+</html>

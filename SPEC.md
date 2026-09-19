@@ -181,6 +181,22 @@ have to be written. That is why it is deferred rather than done.
 > **Known defect (R1.1).** Region ids are positional (`adapters/html_doc.py:223`, `u{i:03d}`), so an
 > insert or split reindexes every region after it. Not met today.
 
+> **Found and fixed 19 September 2026 (U5): the review layer could be injected into the document.**
+> `inject()` placed the layer by replacing the FIRST `"</body>"` in the text. Any artefact
+> containing that literal earlier - in a comment, a string literal, or a code sample - had the whole
+> review layer injected inside its own script block. The layer's script tags became script text,
+> `window.__RV__` was never defined, and `review.js` degraded silently to `{units: [], locked: []}`:
+> a page rendering dead with zero editable regions, no error, and a review bar that looked normal.
+>
+> This is the silent-degradation failure R1.5's nonce discussion warns about, reached by a different
+> route, and a tool for reviewing HTML documents is the tool most likely to be pointed at a document
+> containing HTML as text. Injection now targets the LAST closing body tag, matched case- and
+> whitespace-insensitively. `tests/fixtures/script-attack.html` carries such a comment and is the
+> regression test; reverting the fix fails two checks.
+>
+> **Residual limitation:** a `"</body>"` appearing as text AFTER the real one would still mislead it.
+> That cannot occur in a well-formed document and is not guarded.
+
 > **Known defect (R1.4), measured 19 September 2026.** Discovery **does** crash on deeply nested
 > input. `html_doc.parse` recurses per element, so a document nesting past Python's recursion limit
 > raises `RecursionError` rather than returning a region set. Measured on the default limit of 1000:
@@ -209,7 +225,13 @@ have to be written. That is why it is deferred rather than done.
 > the README. Recommended: detect it — the tool's whole claim is that an edit reaches the file, and
 > a document where most regions were never found cannot honour that.
 
-> **Known defect (R1.2).** A locked region is **not** distinguishable at rest in a browser today.
+> **RESOLVED 19 September 2026 by U5.** The CSP stops document script executing, so the stamped
+> markers survive and locked regions are marked at rest. `tests/browser.py` asserts it on
+> `js-assembled.html` (2 locked, marked before any interaction), and the check fails when the policy
+> is removed. The ordering question below is settled by the same commit: U5 landed before U15, which
+> is the order that was recommended. The original finding is kept below for the record.
+>
+> **Known defect (R1.2), now fixed.** A locked region was **not** distinguishable at rest in a browser.
 > The server stamps `data-rv-locked` correctly — the served HTML for `js-assembled.html` carries two
 > — but the document's own script then executes and an `innerHTML` assignment replaces the stamped
 > nodes, so the rendered page shows none. Confirmed 19 September 2026 against the served source and

@@ -378,6 +378,100 @@ def _selftest():
         h.page.wait_for_selector(".rv-selpop", timeout=3000)
         check("the page's own listener observed it", h.page.is_visible(".rv-selpop"))
 
+        print("\n5b. R1.5 - the document's own scripts do not run")
+
+        # An inline script that steals the token, posts a write, and rewrites
+        # the page. Every one of the three must fail.
+        ha = Harness(fixture=FIXTURES / "script-attack.html")
+        try:
+            ha.start()
+            ha.page.wait_for_timeout(600)          # give the attack time to land
+            # Read the marker element, never document.body.innerText: that
+            # includes the script's own source text, so a body-wide search finds
+            # the attack's string whether or not it ever ran.
+            marker = ha.page.evaluate(
+                "() => (document.getElementById('attack-status')||{}).textContent || ''").strip()
+            check("inline document script did not execute",
+                  "DOCUMENT SCRIPT EXECUTED" not in marker, repr(marker[:60]))
+            check("its marker paragraph is untouched",
+                  "The script has not run." in marker)
+            # Not document.title: review.js sets the title itself, so it would
+            # overwrite the attack's value and the check would pass either way.
+            check("neither deferred attack ran (DOMContentLoaded or timeout)",
+                  ha.page.evaluate(
+                      "() => document.body.getAttribute('data-attack-ran')") is None)
+            # Not "is the planted string absent" - that string is a literal in the
+            # fixture's own script source, so the check could never pass whatever
+            # the server did. The file being byte-identical to the committed
+            # fixture is the assertion that can actually fail.
+            check("its fetch to /__edit wrote nothing at all",
+                  ha.file_on_disk() == (FIXTURES / "script-attack.html").read_bytes())
+
+            csp = ha.page.evaluate(
+                """() => {
+                    const m = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+                    return m ? m.content : null;
+                }""")
+            check("policy is a nonce, not 'self'", csp is None)   # header, not meta
+
+            # Regression: this fixture carries the literal "</body>" inside a JS
+            # comment. inject() used to replace the FIRST occurrence, which put
+            # the whole review layer inside the document's script block - the
+            # layer never ran, window.__RV__ was undefined, and review.js
+            # degraded silently to an empty config with no error shown.
+            check("the review layer was injected OUTSIDE the document's script",
+                  ha.page.evaluate("() => !!window.__RV__"))
+
+            # A17: a sibling .js file is same-origin, which 'self' would allow.
+            hs = Harness(fixture=FIXTURES / "sibling-script.html")
+            try:
+                hs.start()
+                hs.page.wait_for_timeout(600)
+                stext = hs.page.evaluate(
+                    "() => (document.getElementById('chart-body')||{}).textContent || ''").strip()
+                check("external sibling script did not execute (A17)",
+                      "Rendered by the sibling script" not in stext
+                      and hs.page.evaluate(
+                          "() => (document.getElementById('chart-body')||{})"
+                          ".getAttribute('data-sibling-ran')") is None,
+                      repr(stext[:60]))
+                check("its placeholder survives",
+                      "Waiting for the sibling script." in stext)
+                check("review layer still works on that page",
+                      len(hs.region_ids(editable_only=True)) > 3)
+            finally:
+                hs.close()
+
+            print("\n5c. the review layer still functions, and says scripts are off")
+            check("regions present", len(ha.region_ids(editable_only=True)) > 2)
+            check("the script-disabled notice is shown",
+                  ha.page.is_visible(".rv-noscript"),
+                  ha.page.evaluate(
+                      "() => (document.querySelector('.rv-noscript')||{}).textContent || ''"))
+            rid = ha.region_ids(editable_only=True, min_text=40)[0]
+            ha.type_into(rid, "EDITED UNDER CSP")
+            ha.page.wait_for_timeout(300)
+            check("editing still works with the policy on",
+                  b"EDITED UNDER CSP" in ha.file_on_disk())
+
+            print("\n5d. R1.2 - locked regions now survive to be seen at rest")
+            hj = Harness(fixture=FIXTURES / "js-assembled.html")
+            try:
+                hj.start()
+                hj.page.wait_for_timeout(600)
+                locked = [r for r in hj.region_ids() if hj.region_state(r)["locked"]]
+                check("locked regions marked at rest, before any interaction",
+                      len(locked) >= 2, f"{len(locked)} locked")
+                jtext = hj.page.evaluate(
+                    "() => (document.getElementById('live-summary')||{}).textContent || ''")
+                check("the page's script did not replace them",
+                      "Median handover this period" not in jtext
+                      and "Loading the current period" in jtext, repr(jtext.strip()[:60]))
+            finally:
+                hj.close()
+        finally:
+            ha.close()
+
         print("\n6. panel_text is a distinct surface")
         panel = h.panel_text()
         check("panel readable", isinstance(panel, str), repr(panel[:48]))

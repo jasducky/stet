@@ -130,7 +130,7 @@ class Store:
         return comments, None
 
 
-def inject(text, units, locked_ids, cfg):
+def inject(text, units, locked_ids, cfg, nonce):
     """Add the review layer at serve time. The file on disk is untouched."""
     meta = [u.to_json(text) for u in units]
     # stamp data-rv-id on each unit, working backwards so offsets stay valid
@@ -147,13 +147,32 @@ def inject(text, units, locked_ids, cfg):
         out = out[:insert_at] + attrs + out[insert_at:]
 
     payload = json.dumps({"units": meta, "locked": sorted(locked_ids), **cfg})
+    # R1.5: only the review layer's own tags carry the nonce. Document script,
+    # inline or sibling, carries none and does not run. The tag holding the
+    # session token is nonced for exactly this reason - a same-origin sibling
+    # script would otherwise read the token out of it and post a valid write.
     layer = (
         '<link rel="stylesheet" href="/__lib/review.css">'
-        f'<script>window.__RV__={payload};</script>'
-        '<script src="/__lib/review.js" defer></script>'
+        f'<script nonce="{nonce}">window.__RV__={payload};</script>'
+        f'<script nonce="{nonce}" src="/__lib/review.js" defer></script>'
     )
-    if "</body>" in out:
-        return out.replace("</body>", layer + "</body>", 1)
+    # Inject before the LAST closing body tag, not the first.
+    #
+    # A first-occurrence string replace puts the layer inside the document
+    # whenever "</body>" appears earlier as text - in a comment, a string
+    # literal, or a code sample. The layer's script tags then become script
+    # text, window.__RV__ is never defined, and review.js degrades silently to
+    # an empty config: a page that renders dead with zero regions and no error.
+    # A tool for reviewing HTML documents is exactly the tool most likely to be
+    # pointed at a document that contains HTML as text, so this is a realistic
+    # case rather than an exotic one.
+    # tests/fixtures/script-attack.html carries such a comment and is the
+    # regression test for it.
+    last = None
+    for m in re.finditer(r"</\s*body\s*>", out, re.I):
+        last = m
+    if last:
+        return out[:last.start()] + layer + out[last.start():]
     return out + layer
 
 
@@ -169,12 +188,14 @@ class Handler(BaseHTTPRequestHandler):
         _last_hit = time.time()
         super().end_headers()
 
-    def _send(self, code, body, ctype="text/html; charset=utf-8"):
+    def _send(self, code, body, ctype="text/html; charset=utf-8", extra=None):
         raw = body if isinstance(body, bytes) else body.encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(raw)
 
@@ -216,9 +237,17 @@ class Handler(BaseHTTPRequestHandler):
             text = st.text()
             units = st.units()
             locked = {u.id for u in units if not u.editable}
-            return self._send(200, inject(text, units, locked, {
+
+            # A fresh nonce per response. Not 'self': the artefact's own sibling
+            # script files are same-origin, so 'self' would keep running them.
+            nonce = secrets.token_urlsafe(16)
+            csp = (f"script-src 'nonce-{nonce}'; "
+                   "object-src 'none'; "
+                   "base-uri 'none'")
+            page = inject(text, units, locked, {
                 "author": self.author, "name": st.target.name,
-                "token": SESSION_TOKEN}))
+                "token": SESSION_TOKEN, "scriptsDisabled": True}, nonce)
+            return self._send(200, page, extra={"Content-Security-Policy": csp})
 
         return self._send(404, "not found")
 

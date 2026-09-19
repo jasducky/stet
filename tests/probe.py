@@ -37,6 +37,7 @@ TARGETS = {
     "deep-sections.html":   (90, 115, 0),
     "repeated-prose.html":  (13, 18, 0),
     "sibling-script.html":  (6, 9, 0),
+    "script-attack.html":   (5, 8, 1),
 }
 
 # R1.4: malformed or hostile HTML must not crash discovery.
