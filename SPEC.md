@@ -181,6 +181,19 @@ have to be written. That is why it is deferred rather than done.
 > **Known defect (R1.1).** Region ids are positional (`adapters/html_doc.py:223`, `u{i:03d}`), so an
 > insert or split reindexes every region after it. Not met today.
 
+> **Known defect (R1.2).** A locked region is **not** distinguishable at rest in a browser today.
+> The server stamps `data-rv-locked` correctly — the served HTML for `js-assembled.html` carries two
+> — but the document's own script then executes and an `innerHTML` assignment replaces the stamped
+> nodes, so the rendered page shows none. Confirmed 19 September 2026 against the served source and
+> the rendered DOM.
+>
+> **This makes R1.2 depend on R1.5, not only on the fixtures.** Until the CSP stops document script
+> executing, any at-rest treatment U15 adds is removed by the page itself on load. U15's automated
+> half is a server-side assertion on the units endpoint and will pass while the browser reality
+> stays broken, so the manual check is the only one that can catch this. **Build-or-bend choice, not
+> yet made:** order U15 after U5, or accept that locked marking is unreliable on pages whose script
+> rewrites their own containers. Recommended: order U15 after U5.
+
 > **Product trade-off (R1.5).** Blocking document script also costs the artefact its own
 > interactivity. A dashboard that filters or animates stops doing so under review. This is a
 > deliberate choice: a document that can rewrite itself is worse than a document that cannot move.
@@ -361,14 +374,39 @@ can be derived from an existing artefact.
 | A malformed / truncated corpus | R1.4, A10 | hand-authored |
 | A page with repeated identical prose | R3.3, A6 | hand-authored |
 
-**The JS-assembled fixture does not exist, and the locked path has never been executed.** The
-19 September run found 241 regions and **0 locked**.
+**Every fixture is invented.** The corpus was authored from scratch rather than copied from the
+author's own documents, because this repository is public and git history is permanent. Northwick
+Analytics and every depot, figure and quotation in the fixtures are fictional.
 
-**`tests/probe.py` must fail on a missing fixture.** It currently prints `MISSING` and continues
-(`probe.py:32-34`), and all eight targets are absolute paths under `Path.home()/"Claude"`. A
-stranger cloning the repo gets eight `MISSING` lines, an empty failure list, "All invariants held."
-and exit code 0 — a suite that reports success having tested nothing. The corpus moves into the
-repository and an unresolvable fixture becomes a failure.
+**Status, 19 September 2026 (U1, U2 committed).** Eight fixtures are committed and both suites
+resolve them relative to the test file, so they tell the truth on a clean clone.
+
+| Committed fixture | Regions | Covers |
+|---|---|---|
+| `div-only-card.html` | 6 | I3, R1.3 — divs only; a tag whitelist finds 0 |
+| `checklist-card.html` | 6 | I3 |
+| `js-assembled.html` | 6, **2 locked** | I5, R2.4 |
+| `landing-page.html` | 26 | I1, I4 |
+| `prose-article.html` | 41 | I1, I4; the `e2e.py` target |
+| `table-report.html` | 43 | I1 over tabular content |
+| `div-grid-mock.html` | 63 | I3 — no semantic text element in the body at all |
+| `deep-sections.html` | 101 | I4 — h1–h4 nesting mixed with layout divs |
+
+**The locked path now executes.** An earlier draft of this section recorded that it never had, off a
+run reporting 241 regions and 0 locked. That was already wrong of the previous corpus — one of its
+eight targets showed 3 locked regions — and `js-assembled.html` locks 2 under test today. `probe.py`
+asserts a minimum locked count per fixture, so I5 cannot silently stop firing.
+
+**`tests/probe.py` fails on a missing fixture.** It previously printed `MISSING` and continued, with
+all eight targets absolute paths under `Path.home()`, so a stranger cloning the repo got eight
+`MISSING` lines, an empty failure list, "All invariants held." and exit code 0 — a suite reporting
+success having tested nothing. `e2e.py` was worse: it died at `shutil.copy` before a single
+assertion ran. Both now name an unresolvable fixture and exit 1, and `probe.py` additionally fails
+on an empty corpus and on a region count outside the bounds recorded per fixture, which is what
+gives I3's "does not shatter" a real assertion.
+
+**Still to author (U3):** `malformed/` as four named documents — `truncated.html`, `unclosed.html`,
+`deep-nest.html`, `bad-entities.html` — plus `repeated-prose.html` and `sibling-script.html`.
 
 ---
 
