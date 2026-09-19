@@ -245,3 +245,91 @@ def write(text, units, unit_id, new_inner):
             s, e = u.inner
             return text[:s] + new_inner + text[e:]
     raise KeyError(unit_id)
+
+
+# ---------------------------------------------------------------- validation
+
+# Refused whatever the region contains, because a region's byte range can hold
+# an opaque element even though discovery never descends into one. Belt and
+# braces over the "already present" rule below.
+HARD_BANNED = {
+    "script", "style", "iframe", "object", "embed", "applet",
+    "frame", "frameset", "form", "input", "button", "textarea",
+    "link", "meta", "base",
+}
+
+# Values that execute when a link or image is activated.
+_ACTIVE_URL = re.compile(r"^\s*(javascript|vbscript|data)\s*:", re.I)
+
+
+class _TagScan(HTMLParser):
+    """Collect the tags and attributes a fragment uses. Tolerant of malformed
+    input: this runs on whatever a client posted, which may be anything."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tags = set()
+        self.attrs = []          # (tag, name, value)
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.add(tag)
+        for name, value in attrs:
+            self.attrs.append((tag, (name or "").lower(), value or ""))
+
+    handle_startendtag = handle_starttag
+
+    def handle_endtag(self, tag):
+        self.tags.add(tag)
+
+
+def _scan(fragment):
+    p = _TagScan()
+    try:
+        p.feed(fragment)
+        p.close()
+    except Exception:                      # noqa: BLE001 - malformed is expected
+        pass
+    return p
+
+
+def validate_edit(new_inner, region_inner):
+    """Raise ValueError with a human-readable reason if this payload may not be
+    written into a region whose current contents are `region_inner`.
+
+    R2.6: only text and the inline elements ALREADY PRESENT in the region are
+    accepted. Server-side, because the browser layer is the part a hostile
+    document can replace - and in apply_edit rather than the HTTP handler,
+    because `server.py --approve` writes without going through one.
+
+    The "already present" rule is deliberately strict. Adding emphasis to a
+    region that had none is refused, and that is the documented trade-off: the
+    tool's job is reviewing wording, not restyling markup.
+    """
+    used = _scan(new_inner)
+
+    banned = sorted(used.tags & HARD_BANNED)
+    if banned:
+        raise ValueError(
+            "refused: an edit may not introduce "
+            + ", ".join(f"<{t}>" for t in banned))
+
+    handlers = sorted({n for _, n, _ in used.attrs if n.startswith("on")})
+    if handlers:
+        raise ValueError(
+            "refused: an edit may not carry event-handler attributes ("
+            + ", ".join(handlers) + ")")
+
+    active = sorted({f"{t}[{n}]" for t, n, v in used.attrs
+                     if n in ("href", "src", "xlink:href") and _ACTIVE_URL.match(v)})
+    if active:
+        raise ValueError(
+            "refused: an edit may not point " + ", ".join(active)
+            + " at a javascript:, vbscript: or data: URL")
+
+    allowed = _scan(region_inner).tags & INLINE
+    introduced = sorted(used.tags - allowed)
+    if introduced:
+        raise ValueError(
+            "refused: an edit may only use the inline elements already in this "
+            "region (" + (", ".join(f"<{t}>" for t in sorted(allowed)) or "none")
+            + "); it introduced " + ", ".join(f"<{t}>" for t in introduced))

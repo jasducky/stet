@@ -266,10 +266,24 @@ have to be written. That is why it is deferred rather than done.
 - **R2.7** When a write is refused after the human has typed into a region, the in-progress content
   is preserved for retry, never discarded by a re-read.
 
-> **Known defect (R2.5, R2.6).** There is no origin, referer or token check anywhere in
-> `server.py`. The browser layer posts the region's `innerHTML` and the server writes it unfiltered,
-> so an edit can introduce a `script` tag that persists into the artefact and runs on every
+> **RESOLVED 19 September 2026.** R2.5 by U4 (origin / `Sec-Fetch-Site` plus a per-process session
+> token on the seven browser-only endpoints), R2.6 by U6 (payload validation in `Store.apply_edit`,
+> so the `--approve` CLI verb is covered too). The original defect is kept below for the record.
+>
+> **Known defect (R2.5, R2.6), now fixed.** There was no origin, referer or token check anywhere in
+> `server.py`. The browser layer posted the region's `innerHTML` and the server wrote it unfiltered,
+> so an edit could introduce a `script` tag that persisted into the artefact and ran on every
 > subsequent serve.
+>
+> **Note on the validator's two rules.** The "only inline elements already present in the region"
+> allowlist is the load-bearing one; it alone refuses every hard-banned tag, because no banned tag is
+> ever an inline element. The explicit `HARD_BANNED` list survives for the *reason string* - "an edit
+> may not introduce `<script>`" is a far more useful refusal than "may only use the inline elements
+> already in this region" - and as a second line if the allowlist is ever loosened. Both are
+> mutation-tested: emptying the list fails two checks, on the message rather than on the outcome.
+>
+> **Documented trade-off.** The allowlist is strict by design. Adding emphasis to a region that had
+> none is refused. The tool's job is reviewing wording, not restyling markup.
 
 ### R3. Proposals and the approval gate
 

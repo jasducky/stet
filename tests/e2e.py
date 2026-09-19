@@ -51,11 +51,17 @@ def raw_call(path, body=None, headers=None, method=None):
     Never adds the token or an Origin of its own, so it can be used to assert a
     refusal. urllib raises on 4xx, which is caught here so the status is data.
     """
+    if isinstance(body, (bytes, bytearray)):
+        payload = bytes(body)                 # sent verbatim, malformed on purpose
+    elif body is not None:
+        payload = json.dumps(body).encode()
+    else:
+        payload = None
     req = urllib.request.Request(
         BASE + path,
-        data=json.dumps(body).encode() if body is not None else None,
+        data=payload,
         headers=headers or {},
-        method=method or ("POST" if body is not None else "GET"))
+        method=method or ("POST" if payload is not None else "GET"))
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             raw, status = r.read().decode(), r.status
@@ -229,7 +235,81 @@ def main():
         blob = "".join(f.read_text() for f in sidecar.iterdir())
         check("the token is written nowhere under .review/", TOKEN not in blob)
 
-        print("\n6. agent event stream")
+        print("\n6. payload validation on BOTH write paths (R2.6)")
+        v_unit = next(u for u in units
+                      if u["editable"] and len(u["raw"].strip()) > 40
+                      and u["id"] != target_unit["id"])
+        doc_before = target.read_text()
+
+        # The expected REASON is asserted, not merely that something was refused.
+        # Each rule has its own message, and the message is what the human acts
+        # on. It also makes each rule observable: without the hard-ban list the
+        # allowlist still refuses <script>, but with a far vaguer reason, and
+        # that difference would otherwise go unnoticed.
+        for label, payload, expect in [
+            ("<script>", 'text <script>alert(1)</script>',
+             "may not introduce <script>"),
+            ("onclick=", '<span onclick="steal()">text</span>',
+             "may not carry event-handler attributes"),
+            ("<iframe>", 'text <iframe src="//evil"></iframe>',
+             "may not introduce <iframe>"),
+            ("javascript: href", '<a href="javascript:x()">text</a>',
+             "javascript:, vbscript: or data: URL"),
+            ("an inline element not in the region", '<mark>highlighted</mark>',
+             "may only use the inline elements already in this region"),
+        ]:
+            r = call("/__edit", {"id": v_unit["id"], "text": payload, "author": "Julia"})
+            err = str(r.get("error", ""))
+            check(f"a payload containing {label} is refused, naming why",
+                  r.get("ok") is False and expect in err,
+                  err[:96] or json.dumps(r)[:96])
+        check("the file is unchanged by every refused edit",
+              target.read_text() == doc_before)
+
+        # an inline element ALREADY in the region is accepted
+        em_unit = next((u for u in units
+                        if u["editable"] and "<em>" in u["raw"]), None)
+        if em_unit:
+            r = call("/__edit", {"id": em_unit["id"],
+                                 "text": "kept <em>its emphasis</em> and reworded",
+                                 "author": "Julia"})
+            check("an <em> already present in the region is accepted",
+                  r.get("ok") and r.get("changed"), json.dumps(r)[:90])
+        else:
+            check("fixture has a region containing <em> to test acceptance", False,
+                  "none found - the acceptance half of R2.6 is untested")
+
+        # an approved PROPOSAL carrying a script tag, over HTTP
+        c3 = call("/__comment", {"unit": v_unit["id"], "quote": "",
+                                 "comment": "try to smuggle a script in"})
+        call("/__propose", {"id": c3["id"], "unit": v_unit["id"],
+                            "text": 'ok <script>alert(2)</script>'})
+        doc_before = target.read_text()
+        r = call("/__approve", {"id": c3["id"]})
+        check("an approved proposal carrying <script> is refused on the same path",
+              r.get("ok") is False and "refused" in str(r.get("error", "")),
+              json.dumps(r)[:90])
+        check("that proposal did not reach the file", target.read_text() == doc_before)
+
+        # ...and the SAME proposal through the CLI verb, which never touches a
+        # handler. This is the path validation at the HTTP layer would miss.
+        cli = subprocess.run(
+            [sys.executable, str(ROOT / "server.py"), str(target), "--approve", c3["id"]],
+            capture_output=True, text=True)
+        check("server.py --approve refuses it identically",
+              cli.returncode != 0 and "refused" in (cli.stdout + cli.stderr),
+              (cli.stdout + cli.stderr).strip()[:90])
+        check("the CLI path did not write it either", target.read_text() == doc_before)
+
+        # a malformed body gets a 400, not a dead connection
+        status, body = raw_call("/__edit", b"NOT JSON{{{",
+                                {"Content-Type": "application/json",
+                                 "Origin": ORIGIN, "Sec-Fetch-Site": "same-origin",
+                                 "X-RV-Token": TOKEN})
+        check("a malformed body returns a status rather than no response",
+              status == 400, str(status))
+
+        print("\n7. agent event stream")
         inbox = (TMP / ".review" / target.stem / "inbox.jsonl").read_text().strip().splitlines()
         kinds = [json.loads(l)["type"] for l in inbox]
         check("inbox is append-only JSONL for Monitor", len(inbox) >= 4, ",".join(kinds))

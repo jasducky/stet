@@ -94,6 +94,13 @@ class Store:
         before = unit.raw(text)
         if before == new_inner:
             return False
+
+        # R2.6. Here rather than in do_POST because `server.py --approve` calls
+        # this straight from main() and never touches an HTTP handler, so
+        # validating at the HTTP layer would leave the CLI verb writing
+        # unvalidated content into the file. Every write path goes through here.
+        html_doc.validate_edit(new_inner, before)
+
         self.target.write_text(html_doc.write(text, units, unit_id, new_inner))
         self.log_edit(unit_id, unit.tag, before, new_inner, author)
         return True
@@ -303,7 +310,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         length = int(self.headers.get("Content-Length", 0))
-        data = json.loads(self.rfile.read(length)) if length else {}
+        raw = self.rfile.read(length) if length else b""
+        try:
+            data = json.loads(raw) if raw else {}
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            # Previously this raised, the handler died, and the client got no
+            # HTTP response at all rather than a 400. Recorded during U4 and
+            # fixed here, because a malformed payload is a payload question.
+            return self._json({"ok": False, "error": f"malformed JSON: {e}"}, 400)
+        if not isinstance(data, dict):
+            return self._json({"ok": False, "error": "body must be a JSON object"}, 400)
+
         who = data.get("author") or self.author
 
         if p == "/__edit":
@@ -445,7 +462,11 @@ def main():
         if not pr:
             print(f"{cid}: nothing proposed")
             sys.exit(1)
-        store.apply_edit(pr["unit"], pr["text"], "Claude (approved)")
+        try:
+            store.apply_edit(pr["unit"], pr["text"], "Claude (approved)")
+        except (KeyError, ValueError) as e:
+            print(f"{cid}: {e}")
+            sys.exit(1)
         c["status"] = "applied"
         store.save(comments)
         print(f"{cid} applied to {pr['unit']}")
