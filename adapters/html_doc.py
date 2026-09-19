@@ -18,6 +18,7 @@ document is never re-serialised: everything Claude wrote outside the edited
 span survives byte for byte, and git diffs stay readable.
 """
 
+import hashlib
 import re
 from html.parser import HTMLParser
 
@@ -219,8 +220,17 @@ def parse(text):
 
     locked = _script_locked_ids(b.scripts, text)
     units = []
+    seen = {}
     for i, (node, depth) in enumerate(raw):
-        u = Unit(f"u{i:03d}", node.tag, (node.start, node.end),
+        rid = _region_id(node, text)
+        # A collision would make write() edit whichever region came first, with
+        # nothing reported. Disambiguate deterministically in document order.
+        if rid in seen:
+            seen[rid] += 1
+            rid = f"{rid}-{seen[rid]}"
+        else:
+            seen[rid] = 0
+        u = Unit(rid, node.tag, (node.start, node.end),
                  (node.inner_start, node.inner_end), depth)
         anc, hit = node, None
         while anc is not None:
@@ -234,6 +244,72 @@ def parse(text):
             u.reason = f"built by script (#{hit}) - comment only"
         units.append(u)
     return units
+
+
+def _path_step(node):
+    """What identifies this element among its same-tag siblings.
+
+    Deliberately uses only things that do NOT change when the region's text is
+    edited: the tag, its id or classes, and its index among same-tag siblings.
+    """
+    attrs = dict(node.attrs or [])
+    nid = attrs.get("id")
+    if nid:
+        return f"{node.tag}#{nid}"        # unique in a document; no index needed
+
+    step = node.tag or "?"
+    cls = (attrs.get("class") or "").split()
+    if cls:
+        step += "." + ".".join(cls[:2])
+    if node.parent is not None:
+        same = [c for c in node.parent.children if getattr(c, "tag", None) == node.tag]
+        try:
+            step += f"[{same.index(node)}]"
+        except ValueError:
+            pass
+    return step
+
+
+_WS = re.compile(r"\s+")
+
+
+def _region_id(node, text):
+    """A region's identity: where it sits in the tree, plus what it says.
+
+    R1.1. The old id was the region's ORDINAL (u000, u001, ...), so inserting or
+    splitting a region renumbered every region after it and every stored comment
+    silently pointed at different text.
+
+    BOTH parts are needed, and position alone is not enough. A structural path
+    ending in the node's own sibling index has the same defect in a narrower
+    form: splitting a <p> shifts every later <p> from [3] to [4], so an old id
+    still resolves - to the wrong paragraph. Measured, not assumed.
+
+    So the node's own step is its tag plus a digest of its normalised text,
+    while its ANCESTORS contribute their indexed path. A container being
+    inserted is far rarer than a sibling paragraph appearing, and identical text
+    in two different containers still gets two ids.
+
+    The consequence, accepted deliberately: editing a region changes that
+    region's own id. Re-anchoring a comment onto edited words is text anchoring,
+    which is U8, and an anchor that can no longer be placed is U9's orphan case.
+
+    The id is OPAQUE. Nothing outside this module may parse it.
+    """
+    parts = []
+    n = node.parent
+    while n is not None and getattr(n, "tag", None):
+        parts.append(_path_step(n))
+        n = n.parent
+    path = "/".join(reversed(parts))
+
+    inner = ""
+    if node.inner_start is not None and node.inner_end is not None:
+        inner = text[node.inner_start:node.inner_end]
+    content = _WS.sub(" ", inner).strip()
+
+    seed = f"{path}/{node.tag}:{content}"
+    return "r" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:10]
 
 
 def write(text, units, unit_id, new_inner):

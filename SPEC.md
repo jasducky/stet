@@ -178,8 +178,32 @@ have to be written. That is why it is deferred rather than done.
   Content-Security-Policy permitting only the review layer's own script assets, so document script
   cannot execute or reach the write endpoints.
 
-> **Known defect (R1.1).** Region ids are positional (`adapters/html_doc.py:223`, `u{i:03d}`), so an
-> insert or split reindexes every region after it. Not met today.
+> **RESOLVED 19 September 2026 by U7.** Region ids are derived from the region's normalised text plus
+> its ancestors' indexed path, so an insert or split no longer renumbers anything. Measured on
+> `prose-article.html`: splitting one region left **39 of 41** other regions resolving to different
+> text under the old positional scheme, and **0** under this one. The original defect is kept below.
+>
+> **Known defect (R1.1), now fixed.** Region ids were positional (`u{i:03d}`), so an insert or split
+> reindexed every region after it and a stored reference silently pointed at different words.
+>
+> **Why both halves are needed.** Position alone is not enough, and this was measured rather than
+> assumed: a structural path ending in the node's own sibling index has the same defect in a narrower
+> form, because splitting a `<p>` shifts every later `<p>` from `[3]` to `[4]` and an old id still
+> resolves - to the wrong paragraph. That scheme was written, tested, and left 22 regions
+> mis-resolving. Content is what fixes it; the ancestors' path is what keeps identical text in two
+> different containers distinct.
+>
+> **Accepted consequence.** Because the id contains the region's text, editing a region changes that
+> region's own id. Re-anchoring a comment onto the edited words is text anchoring (U8); an anchor
+> that can no longer be placed is the orphan case (U9). Asserted, so it is a decision rather than a
+> surprise.
+>
+> **Ambiguity is not hidden.** Two regions with identical text in the SAME container genuinely
+> collide; the second is suffixed `-1` in document order. That is the ambiguous case U8 and U9 exist
+> to resolve, not something the id scheme can settle on its own.
+>
+> **Ids are opaque.** Nothing outside `adapters/html_doc.py` may parse one. A reference in the form
+> of the retired scheme raises `KeyError` rather than resolving to anything.
 
 > **Found and fixed 19 September 2026 (U5): the review layer could be injected into the document.**
 > `inject()` placed the layer by replacing the FIRST `"</body>"` in the text. Any artefact

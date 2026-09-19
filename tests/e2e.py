@@ -129,7 +129,9 @@ def main():
         check("session token minted and injected into the page",
               bool(TOKEN) and len(TOKEN) >= 32, f"{len(TOKEN or '')} chars")
         check("artefact file NOT modified by serving", target.read_text() == original)
-        check("data-rv-id stamped in the served copy", 'data-rv-id="u0' in page)
+        # The id form is opaque and nothing outside the adapter may parse it,
+        # so this asserts the attribute is present, not what it looks like.
+        check("data-rv-id stamped in the served copy", 'data-rv-id="' in page)
         check("stamped ids absent from the file on disk", "data-rv-id" not in target.read_text())
 
         units = call("/__units")

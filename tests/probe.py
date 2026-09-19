@@ -160,6 +160,60 @@ for name, min_regions in MALFORMED.items():
     print(f"{name[:30]:32} parsed, {len(units):3} regions, overlap {overlap}, round-trip {rt}")
 
 print()
+print("R1.1 / I1 - a reference to a region survives an edit to another region")
+print("-" * 104)
+
+_id_src = (FIXTURES / "prose-article.html").read_text()
+_id_units = html_doc.parse(_id_src)
+
+# Edit one region so its byte length changes, and split another into two. No
+# OTHER region's id may disappear, and - the part that matters - no surviving id
+# may come back pointing at different text. Checking only that an id still
+# exists passes while it silently resolves to the wrong paragraph, which is the
+# defect R1.1 describes.
+_a = next(u for u in _id_units if u.editable and len(u.raw(_id_src).strip()) > 60)
+_others = {u.id: u.raw(_id_src) for u in _id_units if u.id != _a.id}
+
+for _label, _payload in [
+    ("grown", "A MUCH LONGER REPLACEMENT " * 12),
+    ("shrunk", "tiny"),
+    ("split", "first half</p><p>second half that did not exist before"),
+]:
+    _new = html_doc.write(_id_src, _id_units, _a.id, _payload)
+    _by = {u.id: u for u in html_doc.parse(_new)}
+    _lost = [i for i in _others if i not in _by]
+    _moved = [i for i in _others if i in _by and _by[i].raw(_new) != _others[i]]
+    if _lost:
+        fails.append(f"identity: {len(_lost)} region ids vanished when one region was {_label}")
+    if _moved:
+        fails.append(f"identity: {len(_moved)} ids resolved to DIFFERENT text "
+                     f"when one region was {_label} (e.g. {_moved[0]})")
+    print(f"{'one region ' + _label:32} {len(_lost):3} lost, {len(_moved):3} mis-resolved")
+
+# identical text in different tree positions must not share an id
+_rp = (FIXTURES / "repeated-prose.html").read_text()
+_same = [u for u in html_doc.parse(_rp)
+         if u.raw(_rp).strip() == "The average is the one number that cannot show you the problem."]
+if len(_same) < 3:
+    fails.append(f"identity: repeated-prose.html holds {len(_same)} identical regions, expected 3")
+if len({u.id for u in _same}) != len(_same):
+    fails.append("identity: regions with identical text share an id")
+print(f"{'identical text, distinct ids':32} {len(_same)} regions, "
+      f"{len({u.id for u in _same})} distinct ids")
+
+# re-parsing an unchanged document is deterministic
+if [u.id for u in html_doc.parse(_id_src)] != [u.id for u in _id_units]:
+    fails.append("identity: re-parsing an unchanged document produced different ids")
+
+# an id from the retired positional scheme must fail loudly, never resolve
+try:
+    html_doc.write(_id_src, _id_units, "u012", "hijacked")
+    fails.append("identity: a retired positional id (u012) still resolved to a region")
+except KeyError:
+    pass
+print(f"{'retired u012 reference':32} raises KeyError, does not resolve")
+
+print()
 
 # An empty or unresolvable corpus must fail here rather than print a verdict.
 expected = len(TARGETS) + len(MALFORMED)
