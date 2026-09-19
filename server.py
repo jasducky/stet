@@ -123,9 +123,20 @@ class Store:
     def save(self, comments):
         self.comments.write_text(json.dumps(comments, indent=1))
 
-    def append_inbox(self, event):
-        """Append-only event stream. The agent watches this file with Monitor,
-        so one line per event and never a rewrite."""
+    def append_inbox(self, kind, author, **fields):
+        """Append-only event stream. One line per event, never a rewrite.
+
+        R4.4/R4.6. `author` is a required positional argument rather than a
+        field a caller is trusted to remember: U11's --as filter has nothing to
+        match on without it, so an agent would wake on its own approvals for
+        ever - the loop the old author-filtering existed to prevent. A rule in
+        prose is forgotten by the tenth call site; a missing argument is a
+        TypeError the suite catches at once.
+        """
+        if not author:
+            raise ValueError(f"inbox event {kind!r} written without an author")
+        event = {"type": kind, "at": iso(), "author": author}
+        event.update(fields)
         with self.inbox.open("a") as f:
             f.write(json.dumps(event) + "\n")
 
@@ -328,9 +339,10 @@ class Handler(BaseHTTPRequestHandler):
                 changed = st.apply_edit(data["id"], data.get("text", ""), who)
             except (KeyError, ValueError) as e:
                 return self._json({"ok": False, "error": str(e)}, 400)
-            if changed and who != "Claude":
-                st.append_inbox({"type": "edit", "at": iso(),
-                                 "unit": data["id"], "author": who})
+            # No author filtering at write time. The stream is the record;
+            # deciding what to wake for is the reader's job (U11's --as).
+            if changed:
+                st.append_inbox("edit", who, unit=data["id"])
             return self._json({"ok": True, "changed": changed})
 
         comments = st.load()
@@ -342,9 +354,8 @@ class Handler(BaseHTTPRequestHandler):
                  "comment": data["comment"], "replies": []}
             comments.append(c)
             st.save(comments)
-            st.append_inbox({"type": "comment", "at": iso(), "id": cid,
-                             "unit": c["unit"], "quote": c["quote"][:200],
-                             "comment": c["comment"]})
+            st.append_inbox("comment", who, id=cid, unit=c["unit"],
+                            quote=c["quote"][:200], comment=c["comment"])
             return self._json({"ok": True, "id": cid})
 
         comments, c = st.find(data.get("id", ""))
@@ -358,11 +369,24 @@ class Handler(BaseHTTPRequestHandler):
             # region index, and capture them through the same normalisation
             # approval will use. An explicit anchor from the caller wins, so an
             # agent can propose against a phrase rather than a whole region.
-            anchor = data.get("anchor")
+            anchor = html_doc.anchor_text(data.get("anchor") or "")
             if not anchor:
                 doc = st.text()
                 u = next((x for x in st.units() if x.id == unit_id), None)
                 anchor = html_doc.anchor_text(u.raw(doc)) if u is not None else ""
+
+            # Refuse rather than store a proposal that can never be resolved.
+            # A region id goes stale as soon as that region's text is edited
+            # (R1.1), so this is the ordinary case of an agent proposing against
+            # something a human has since changed - not an exotic one. Storing an
+            # empty anchor made it dead on arrival, and said so only at approve
+            # time, long after the agent had moved on.
+            if not anchor:
+                return self._json(
+                    {"ok": False, "status": "unanchored",
+                     "error": f"cannot anchor this proposal: region {unit_id!r} is no "
+                              f"longer in the document, and no anchor text was given"},
+                    409)
 
             c["proposal"] = {"unit": unit_id,
                              "text": data.get("text", ""),
@@ -406,8 +430,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(hits) == 0:
                 c["status"] = "orphaned"
                 st.save(comments)
-                st.append_inbox({"type": "orphaned", "at": iso(), "id": c["id"],
-                                 "author": who, "anchor": anchor[:200]})
+                st.append_inbox("orphaned", who, id=c["id"], anchor=anchor[:200])
                 return self._json({"ok": False, "status": "orphaned",
                                    "anchor": anchor,
                                    "error": "the text this was written against is no "
@@ -416,9 +439,8 @@ class Handler(BaseHTTPRequestHandler):
             if len(hits) > 1:
                 c["status"] = "ambiguous"
                 st.save(comments)
-                st.append_inbox({"type": "ambiguous", "at": iso(), "id": c["id"],
-                                 "author": who, "anchor": anchor[:200],
-                                 "matches": [u.id for u in hits]})
+                st.append_inbox("ambiguous", who, id=c["id"], anchor=anchor[:200],
+                                matches=[u.id for u in hits])
                 return self._json({"ok": False, "status": "ambiguous",
                                    "anchor": anchor,
                                    "matches": [u.id for u in hits],
@@ -435,31 +457,26 @@ class Handler(BaseHTTPRequestHandler):
                                    "error": str(e)}, 400)
             c["status"] = "applied"
             c["resolved"] = pr.get("note", "")
-            st.append_inbox({"type": "approved", "at": iso(), "id": c["id"],
-                             "author": who, "unit": landed.id})
+            st.append_inbox("approved", who, id=c["id"], unit=landed.id)
 
         elif p == "/__reject":
             c["status"] = "open"
             c["replies"].append({"time": now(), "author": who,
                                  "text": data.get("reason", "(no reason given)")})
             c.pop("proposal", None)
-            st.append_inbox({"type": "rejected", "at": iso(), "id": c["id"],
-                             "reason": data.get("reason", "")})
+            st.append_inbox("rejected", who, id=c["id"], reason=data.get("reason", ""))
 
         elif p == "/__reply":
             c["replies"].append({"time": now(), "author": who, "text": data["text"]})
-            if who != "Claude":
-                st.append_inbox({"type": "reply", "at": iso(), "id": c["id"],
-                                 "text": data["text"]})
+            st.append_inbox("reply", who, id=c["id"], text=data["text"])
 
         elif p == "/__bin":
             # R3.5: binning is a single action. The thread stays and returns to
             # open; only the proposal goes, and the event records that it did.
             had = c.pop("proposal", None)
             c["status"] = "open"
-            st.append_inbox({"type": "binned", "at": iso(), "id": c["id"],
-                             "author": who,
-                             "anchor": (had or {}).get("anchor", "")[:200]})
+            st.append_inbox("binned", who, id=c["id"],
+                            anchor=(had or {}).get("anchor", "")[:200])
 
         elif p == "/__resolve":
             c["status"] = "applied"
@@ -561,6 +578,10 @@ def main():
         except (KeyError, ValueError) as e:
             print(f"{cid}: {e}")
             sys.exit(1)
+        # KTD7: this verb writes to the file, so it belongs in the stream. It
+        # recorded nothing before, which made "the stream is the record" false
+        # for the one path that runs without a browser.
+        store.append_inbox("approved", author, id=cid, unit=hits[0].id, via="cli")
         c["status"] = "applied"
         store.save(comments)
         print(f"{cid} applied to {pr['unit']}")

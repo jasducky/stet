@@ -502,10 +502,89 @@ def main():
         check("f. an anchor differing only in whitespace still matches",
               r.get("ok"), json.dumps(r)[:110])
 
-        print("\n8. agent event stream")
-        inbox = (TMP / ".review" / target.stem / "inbox.jsonl").read_text().strip().splitlines()
-        kinds = [json.loads(l)["type"] for l in inbox]
-        check("inbox is append-only JSONL for Monitor", len(inbox) >= 4, ",".join(kinds))
+        print("\n8. agent event stream: complete, authored, unfiltered (R4.4, R4.6)")
+
+        stale = call("/__propose", {"id": cid_r if False else "c01",
+                                    "unit": "rdeadbeef00",
+                                    "text": "cannot land anywhere"})
+        check("a proposal against a vanished region is refused at propose time",
+              stale.get("ok") is False and stale.get("status") == "unanchored",
+              json.dumps(stale)[:100])
+
+        # an agent-authored edit and reply must BOTH appear. They were filtered
+        # out at write time, so the record was missing exactly the events a
+        # second reader would care about.
+        agent_unit = next(u for u in call("/__units")
+                          if u["editable"] and len(u["raw"].strip()) > 60)
+        call("/__edit", {"id": agent_unit["id"], "text": "AGENT WROTE THIS",
+                         "author": "Claude"})
+        cid_r = call("/__comment", {"unit": agent_unit["id"], "quote": "",
+                                    "comment": "for an agent reply"})["id"]
+        call("/__reply", {"id": cid_r, "text": "agent replying", "author": "Claude"})
+
+        inbox_path = TMP / ".review" / target.stem / "inbox.jsonl"
+        lines = inbox_path.read_text().strip().splitlines()
+        events = [json.loads(l) for l in lines]
+        kinds = [e["type"] for e in events]
+
+        check("inbox is append-only JSONL for Monitor", len(lines) >= 4,
+              f"{len(lines)} events")
+        check("an edit authored Claude is recorded",
+              any(e["type"] == "edit" and e.get("author") == "Claude" for e in events))
+        check("a reply authored Claude is recorded",
+              any(e["type"] == "reply" and e.get("author") == "Claude" for e in events))
+
+        # the one that matters: nothing in the stream may lack an author
+        missing = [e for e in events if not e.get("author")]
+        check("EVERY event carries a non-empty author",
+              not missing,
+              f"{len(missing)} without: {sorted({e['type'] for e in missing})}"
+              if missing else f"{len(events)} events")
+
+        # and every event type reached by this run is represented
+        check("several event types were exercised, not just one",
+              len(set(kinds)) >= 5, ",".join(sorted(set(kinds))))
+
+        # ordering preserved and the file only ever grew
+        before_len = len(lines)
+        call("/__comment", {"unit": agent_unit["id"], "quote": "", "comment": "one more"})
+        after = inbox_path.read_text().strip().splitlines()
+        check("the file is append-only: earlier lines are untouched",
+              after[:before_len] == lines)
+        check("and it grew by exactly the new event", len(after) == before_len + 1)
+
+        # no author filtering anywhere in the source
+        src = (ROOT / "server.py").read_text()
+        check("no event is filtered by author at write time",
+              'who != "Claude"' not in src and "who != 'Claude'" not in src)
+
+        # the CLI verb records its own write (KTD7)
+        # re-read the units: agent_unit's id went stale the moment its text was
+        # edited above, which is exactly what R1.1's identity scheme does.
+        cli_unit = next(u for u in call("/__units")
+                        if u["editable"] and len(u["raw"].strip()) > 60
+                        and "AGENT WROTE THIS" not in u["raw"])
+        cid_cli = call("/__comment", {"unit": cli_unit["id"], "quote": "",
+                                      "comment": "approved from the shell"})["id"]
+        pr = call("/__propose", {"id": cid_cli, "unit": cli_unit["id"],
+                                 "text": "APPLIED FROM THE CLI"})
+        check("the proposal anchored", pr.get("ok"), json.dumps(pr)[:90])
+        before_cli = len(inbox_path.read_text().strip().splitlines())
+        cli = subprocess.run(
+            [sys.executable, str(ROOT / "server.py"), str(target), "--approve", cid_cli],
+            capture_output=True, text=True)
+        cli_events = [json.loads(l) for l in
+                      inbox_path.read_text().strip().splitlines()[before_cli:]]
+        check("server.py --approve applied it", cli.returncode == 0,
+              (cli.stdout + cli.stderr).strip()[:80])
+        check("and appended an approved event",
+              any(e["type"] == "approved" for e in cli_events),
+              str([e["type"] for e in cli_events]))
+        # all([]) is True, so the count is asserted first: a vacuous pass over an
+        # empty list is the same defect as a suite that tested nothing.
+        check("with an author on it",
+              len(cli_events) > 0 and all(e.get("author") for e in cli_events),
+              f"{len(cli_events)} events")
 
     finally:
         proc.terminate()
