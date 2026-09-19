@@ -484,6 +484,48 @@ def _selftest():
             check("editing still works with the policy on",
                   b"EDITED UNDER CSP" in ha.file_on_disk())
 
+            print("\n5d2. A15 - a locked region LOOKS locked before any interaction")
+            hl = Harness(fixture=FIXTURES / "js-assembled.html")
+            try:
+                hl.start()
+                hl.page.wait_for_timeout(400)
+                lids = [r for r in hl.region_ids() if hl.region_state(r)["locked"]]
+                eids = [r for r in hl.region_ids() if not hl.region_state(r)["locked"]]
+                check("d2. there are locked and editable regions to compare",
+                      len(lids) >= 2 and len(eids) >= 2, f"{len(lids)} / {len(eids)}")
+
+                # The plan called this manual. It is not: a computed style and a
+                # generated ::after are both readable, so "distinguishable at
+                # rest" can be asserted rather than eyeballed at every publish.
+                look = hl.page.evaluate(
+                    """([lid, eid]) => {
+                        const L = document.querySelector(`[data-rv-id="${lid}"]`);
+                        const E = document.querySelector(`[data-rv-id="${eid}"]`);
+                        const cs = n => getComputedStyle(n);
+                        const af = n => getComputedStyle(n, '::after').content;
+                        return {
+                            lockedBg: cs(L).backgroundImage,
+                            plainBg: cs(E).backgroundImage,
+                            lockedShadow: cs(L).boxShadow,
+                            plainShadow: cs(E).boxShadow,
+                            lockedAfter: af(L),
+                            plainAfter: af(E),
+                        };
+                    }""", [lids[0], eids[0]])
+
+                check("d2. a locked region is drawn differently from an editable one",
+                      look["lockedBg"] != look["plainBg"]
+                      or look["lockedShadow"] != look["plainShadow"],
+                      look["lockedBg"][:46])
+                check("d2. before any hover, click or edit attempt",
+                      "none" in look["plainBg"] and "gradient" in look["lockedBg"])
+                check("d2. and the reason is on screen, not hidden behind an attempt",
+                      "script" in look["lockedAfter"].lower()
+                      and look["plainAfter"] in ("none", "normal", '""'),
+                      look["lockedAfter"][:60])
+            finally:
+                hl.close()
+
             print("\n5d. R1.2 - locked regions now survive to be seen at rest")
             hj = Harness(fixture=FIXTURES / "js-assembled.html")
             try:

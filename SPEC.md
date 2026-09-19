@@ -196,7 +196,9 @@ have to be written. That is why it is deferred rather than done.
 
 - **R1.1** Every region has an identity stable across edits to other regions.
 - **R1.2** A region is editable, or locked with a human-readable reason. A locked region is
-  distinguishable **at rest**, on page load, not only when an edit is attempted.
+  distinguishable **at rest**, on page load, not only when an edit is attempted. *(Met 19 Sep 2026,
+  U15: the reason is stamped as `data-rv-reason` and shown by the stylesheet with `attr()`, so
+  neither the marking nor the reason depends on any script running.)*
 - **R1.3** Region discovery works on hand-written HTML, exported HTML, and div-only visual
   artefacts.
 - **R1.4** Malformed or hostile HTML must not crash discovery. A document that cannot be parsed is

@@ -18,6 +18,7 @@ is injected at serve time, so nothing is written into the artefact and there is
 no removal step - close the server and the file is exactly as Claude wrote it.
 """
 
+import html
 import json
 import os
 import re
@@ -269,7 +270,14 @@ def inject(text, units, locked_ids, cfg, nonce):
             continue
         attrs = f' data-rv-id="{u.id}"'
         if not u.editable:
-            attrs += ' data-rv-locked="1"'
+            # R1.2/A15. The REASON is stamped as well as the fact, so a locked
+            # region is distinguishable at rest and says why without anyone
+            # having to attempt an edit to find out. The review stylesheet reads
+            # it with attr(), so no script is needed to show it - which matters,
+            # because under R1.5's policy the document's own script cannot run.
+            reason = html.escape(u.reason or "this region cannot be edited",
+                                 quote=True)
+            attrs += f' data-rv-locked="1" data-rv-reason="{reason}"'
         insert_at = tag_end - 1 if out[tag_end - 1] == "/" else tag_end
         out = out[:insert_at] + attrs + out[insert_at:]
 
@@ -733,8 +741,9 @@ def main():
               flush=True)
     print(f"artefact-review -> http://localhost:{port}")
     print(f"  target   : {target}")
-    print(f"  units    : {len(units)} editable regions"
-          + (f", {len(locked)} comment-only (script-generated)" if locked else ""))
+    print(f"  units    : {len(units) - len(locked)} editable regions"
+          + (f", {len(locked)} comment-only (script-generated)" if locked else "")
+          + f", {len(units)} in total")
     print(f"  review   : {store.dir}")
     shutdown = []
     if not detach:

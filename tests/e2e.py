@@ -1189,6 +1189,80 @@ def main():
         check("d. the running server reports itself on the loopback address",
               "127.0.0.1" in BASE, BASE)
 
+        print("\n13. locked regions are marked at rest (R1.2, I5, A15)")
+
+        lk_src = ROOT / "tests" / "fixtures" / "js-assembled.html"
+        lk_target = TMP / "locked.html"
+        shutil.copy(lk_src, lk_target)
+        lk_port = PORT + 30
+        lk_proc = subprocess.Popen(
+            [sys.executable, str(ROOT / "server.py"), str(lk_target),
+             "--port", str(lk_port), "--author", "Julia", "--idle-timeout", "0"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        main_base, main_token, main_origin = BASE, TOKEN, ORIGIN
+        BASE = f"http://127.0.0.1:{lk_port}"
+        try:
+            for _ in range(60):
+                try:
+                    call("/info"); break
+                except Exception:
+                    time.sleep(0.1)
+            lk_page = call("/")
+            TOKEN = _read_token(lk_page)
+            ORIGIN = f"http://127.0.0.1:{lk_port}"
+
+            lu = call("/__units")
+            locked_units = [u for u in lu if not u["editable"]]
+            check("a. the fixture yields locked regions", len(locked_units) >= 2,
+                  f"{len(locked_units)} of {len(lu)}")
+            check("a. every locked region carries a non-empty reason",
+                  all((u.get("reason") or "").strip() for u in locked_units),
+                  str([u.get("reason", "")[:40] for u in locked_units][:2]))
+            check("a. and every editable one does not claim a reason",
+                  all(not (u.get("reason") or "").strip()
+                      for u in lu if u["editable"]))
+
+            # b. an edit attempt is refused WITH that reason
+            lock1 = locked_units[0]
+            before_lk = lk_target.read_text()
+            r = call("/__edit", {"id": lock1["id"], "text": "SHOULD BE REFUSED",
+                                 "author": "Julia"})
+            check("b. an edit to a locked region is refused", r.get("ok") is False,
+                  json.dumps(r)[:90])
+            check("b. and the refusal carries that region's own reason",
+                  lock1["reason"][:24] in str(r.get("error", "")),
+                  str(r.get("error"))[:90])
+            check("b. nothing was written", lk_target.read_text() == before_lk)
+
+            # c. AT REST in the served page: the marker and the reason are both
+            #    present before any interaction, and without needing script.
+            check("c. the served page marks locked regions at rest",
+                  'data-rv-locked="1"' in lk_page)
+            check("c. and carries the reason as an attribute, readable by CSS",
+                  "data-rv-reason=" in lk_page)
+            for u in locked_units:
+                frag = f'data-rv-id="{u["id"]}"'
+                idx = lk_page.find(frag)
+                seg = lk_page[idx:idx + 400] if idx >= 0 else ""
+                if "data-rv-reason=" not in seg:
+                    check("c. every locked region carries its reason in the page",
+                          False, u["id"])
+                    break
+            else:
+                check("c. every locked region carries its reason in the page", True,
+                      f"{len(locked_units)} regions")
+            check("c. an editable region is not marked",
+                  not any('data-rv-locked' in lk_page[lk_page.find(f'data-rv-id="{u["id"]}"'):
+                                                      lk_page.find(f'data-rv-id="{u["id"]}"') + 60]
+                          for u in lu if u["editable"]))
+        finally:
+            BASE, TOKEN, ORIGIN = main_base, main_token, main_origin
+            lk_proc.terminate()
+            try:
+                lk_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                lk_proc.kill()
+
     finally:
         proc.terminate()
         try:
