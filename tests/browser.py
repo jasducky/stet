@@ -120,7 +120,7 @@ class Harness:
     def start(self):
         _require_playwright()
 
-        self._tmp = Path(tempfile.mkdtemp(prefix="artefact-review-browser-"))
+        self._tmp = Path(tempfile.mkdtemp(prefix="stet-browser-"))
         self.target = self._tmp / self.fixture.name
         shutil.copy(self.fixture, self.target)
 

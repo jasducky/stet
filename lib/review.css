@@ -1,4 +1,4 @@
-/* artefact-review layer. Namespaced rv- so it cannot collide with the artefact,
+/* stet layer. Namespaced rv- so it cannot collide with the artefact,
    and scoped so the page's own design is left alone. */
 
 .rv-on { padding-top: 42px !important; }

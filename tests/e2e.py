@@ -20,7 +20,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 # vault. prose-article is the fixture used here because the loop needs enough regions
 # with real text to edit, comment on and propose against.
 SRC = FIXTURES / "prose-article.html"
-TMP = Path("/tmp/artefact-review-e2e")
+TMP = Path("/tmp/stet-e2e")
 PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}"
 

@@ -1,27 +1,77 @@
-# artefact-review
+# stet
 
-**Suggest mode for HTML documents an agent wrote.**
+**Edit any HTML document in place. Make the agent ask before it changes your words.**
 
-Point it at any HTML file. You get a live page where you can edit any region in place, select text and leave comments, and where the agent's own rewrites arrive as **proposals you approve or send back** rather than changes that already happened.
+An agent writes you an HTML document: a report, a one-pager, a mock, a brief. It is
+nearly right and you want to change a few sentences.
 
-The file on disk only ever changes when you edit it or approve something.
+Your options are usually to ask the agent to regenerate it, and re-read the whole
+thing to find what else moved; to open the markup and edit it by hand; or to copy the
+text somewhere else, fix it, and paste it back into a second copy that has now lost
+the design.
+
+`stet` is the fourth option. Point it at the file:
 
 ```bash
 python3 server.py report.html
 ```
 
+The document opens in your browser looking exactly as it was built. Click any block,
+retype it, and that block is written back into the real file. Only that block: the
+bytes around it do not move, so the diff stays readable and nothing is reformatted.
+
+And when the agent works on the same document, its rewrites do not land. They arrive
+as **proposals** in a sidebar, and you approve them or send them back. Every change,
+yours and its, is recorded with who made it.
+
+The file on disk only ever changes when you edit it, or when you approve something.
+
+### Why "stet"
+
+The proofreader's mark meaning *let it stand*: the note an editor makes to say
+**ignore that change, my words stay as they are.** That is the whole tool.
+
 ---
 
 ## Why this exists
 
-Tools that let you comment on a document for an agent already exist. In all of them the human comments and the agent edits. Nobody asks permission, and there is no record of who changed what.
+It was built to fill a gap the author kept hitting: you can ask an agent to change a
+document, but you cannot simply fix a word yourself, and nothing makes the agent wait
+for a yes.
 
-That is the wrong shape for a document you are responsible for: a CV, a proposal, a client report. You need to edit it yourself, and you need the agent's changes to stop at a gate you control.
+Comment layers for agents already exist. In all of them the human comments and the
+agent edits. Here it is the other way round.
 
-| | Comment | Human edits in place | Agent needs approval | Who-changed-what trail |
+| | Comment | You edit in place | Agent needs approval | Who-changed-what trail |
 |---|---|---|---|---|
 | Comment layers | yes | no | no | no |
-| **artefact-review** | yes | **yes** | **yes** | **yes** |
+| **stet** | yes | **yes** | **yes** | **yes** |
+
+### It is not tied to one agent
+
+The integration is a command, not a plugin, an extension or an MCP server:
+
+```bash
+python3 watch.py report.html --as claude --since 12
+```
+
+It blocks until something happens, prints the new events as JSON, and exits. That
+works from Claude Code, from Codex, from a shell script and from cron, without any of
+them needing to know about the others. Deliberate: a tool that only works inside one
+assistant is a tool you lose when you change assistant.
+
+---
+
+## The agent's turn
+
+1. `watch.py <file> --as <name> --since <cursor>` — blocks until something happens
+2. read the returned `comment` or `edit` events
+3. read `.review/<name>/comments.json` for the full thread
+4. `POST /__propose {id, unit, text, note}`
+5. `watch.py` again with the new cursor
+
+Events go to stdout, one JSON object per line, exactly as the server wrote them. The
+cursor comes back on stderr and stays valid across a server restart.
 
 ---
 
@@ -92,11 +142,23 @@ Everything the agent reads sits in `.review/<name>/` beside the artefact:
 ## Options
 
 ```
-python3 server.py <file.html> [--port 8790] [--author NAME] [--idle-timeout 900]
+python3 server.py <file.html> [--port 8790] [--author NAME]
+                              [--idle-timeout 900] [--detach] [--max-life 28800]
 python3 server.py <file.html> --approve c03      apply a proposal from the CLI
+
+python3 watch.py <file.html> --as <name> [--since N] [--timeout 300]
 ```
 
-The server never leaks: it exits when the process that launched it dies, or after the idle timeout with no browser attached. `--idle-timeout 0` disables that.
+The server never leaks. It exits when the process that launched it dies, or after the
+idle timeout, and the idle clock counts **human interaction only** — opening the page,
+editing, commenting, approving. The browser's background poll does not keep it alive.
+`--idle-timeout 0` disables the idle clock.
+
+`--detach` genuinely detaches, for an agent starting the server unattended; a detached
+server also has an absolute lifetime cap, eight hours by default, that no amount of
+activity can extend.
+
+It binds `127.0.0.1` only. There is no flag to change that.
 
 ---
 

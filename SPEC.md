@@ -1,4 +1,4 @@
-# Artefact Review, specification
+# stet, specification
 
 **Status:** draft, v1 scope (HTML only)
 **Date:** 19 September 2026
@@ -42,7 +42,7 @@ agent's individual rewrite gated**.
 | **Claude Artifacts** | No, comment threads only | No: Claude republishes the page |
 | **Ch00k/claude-review** | Markdown only | Threaded commenting, no in-place edit |
 | **make-pages-interactive** | Not its purpose | Not its purpose |
-| **Artefact Review** | **Yes** | **Yes, region by region** |
+| **stet** | **Yes** | **Yes, region by region** |
 
 Nothing else occupies the bottom row. That is the whole scope, and it should not broaden.
 

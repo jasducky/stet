@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""artefact-review - edit and comment on any Claude HTML artefact, locally.
+"""stet - edit any HTML document in place, and gate what an agent changes.
 
     python3 server.py <file.html> [--port 8790] [--author NAME] [--detach]
                                   [--idle-timeout 900] [--max-life 28800]
@@ -347,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
         st = self.store
 
         if path == "/info":
-            return self._json({"tool": "artefact-review",
+            return self._json({"tool": "stet",
                                "target": str(st.target), "pid": os.getpid()})
 
         if path.startswith("/__lib/"):
@@ -739,7 +739,7 @@ def main():
         print("[review] *** RV_GATE_DISABLED=1: external-modification detection "
               "is OFF. This is a test seam, not a mode to serve real work in. ***",
               flush=True)
-    print(f"artefact-review -> http://localhost:{port}")
+    print(f"stet -> http://localhost:{port}")
     print(f"  target   : {target}")
     print(f"  units    : {len(units) - len(locked)} editable regions"
           + (f", {len(locked)} comment-only (script-generated)" if locked else "")
