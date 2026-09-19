@@ -221,7 +221,11 @@ have to be written. That is why it is deferred rather than done.
 > **Residual limitation:** a `"</body>"` appearing as text AFTER the real one would still mislead it.
 > That cannot occur in a well-formed document and is not guarded.
 
-> **Known defect (R1.4), measured 19 September 2026.** Discovery **does** crash on deeply nested
+> **RESOLVED 19 September 2026 by U12.** `parse_safe` raises the recursion ceiling for the duration
+> of a parse and reports anything past even that, so depth 1200 now parses and depth 40000 is served
+> read-only rather than raising. No depth raises. The original finding is kept below.
+>
+> **Known defect (R1.4), now fixed.** Discovery **did** crash on deeply nested
 > input. `html_doc.parse` recurses per element, so a document nesting past Python's recursion limit
 > raises `RecursionError` rather than returning a region set. Measured on the default limit of 1000:
 > depth 400 parses and returns 4 regions, depth 1000 raises. A generated or repeatedly-wrapped
@@ -236,7 +240,12 @@ have to be written. That is why it is deferred rather than done.
 > a bound. Recommended: iterative, because a raised limit moves the crash rather than removing it.
 > Owner: the unit that takes R1.4.
 
-> **Known defect (R1.4), second half — "reported as such".** The requirement says a document that
+> **RESOLVED 19 September 2026 by U12.** The builder records elements closed by another element's
+> end tag, and a document with any is served read-only with the reason, every region locked and
+> writes refused. `unclosed.html` reports 11. Checked for false positives across the whole corpus:
+> every well-formed fixture still reports no problems. The original finding is kept below.
+>
+> **Known defect (R1.4), second half, now fixed.** The requirement says a document that
 > cannot be parsed is *reported as such and served read-only*. Recovery is currently silent.
 > `malformed/unclosed.html` — unclosed `<h1>`, four unclosed `<p>`, two nested unclosed `<div>`,
 > three unclosed `<li>` — yields **one** region, the final `<li>`. Every other block produces

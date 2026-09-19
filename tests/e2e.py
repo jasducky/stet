@@ -761,6 +761,124 @@ def main():
         check("f. exit 0, because a quiet period is not an error", rcT == 0)
         check("f. and it actually waited", elapsed >= 0.9, f"{elapsed:.2f}s")
 
+        print("\n10. external modification, and unreadable documents (R7, A9, A10)")
+
+        # (a) no mismatch: writes proceed unchanged
+        ok_unit = next(u for u in call("/__units")
+                       if u["editable"] and len(u["raw"].strip()) > 60)
+        r = call("/__edit", {"id": ok_unit["id"], "text": "ORDINARY EDIT WORKS",
+                             "author": "Julia"})
+        check("a. with nothing changed underneath, a write proceeds", r.get("ok"),
+              json.dumps(r)[:90])
+
+        # (b) another process writes to the file mid-serve
+        call("/")                                   # the human is looking at this
+        victim = next(u for u in call("/__units")
+                      if u["editable"] and len(u["raw"].strip()) > 60
+                      and "ORDINARY EDIT WORKS" not in u["raw"])
+        time.sleep(0.01)
+        outside = target.read_text().replace(
+            "</body>", "<p>added by another process entirely</p></body>", 1)
+        target.write_text(outside)                  # nothing to do with the server
+
+        before_ext = target.read_text()
+        r = call("/__edit", {"id": victim["id"], "text": "SHOULD NOT LAND",
+                             "author": "Julia"})
+        check("b. the next write is refused", r.get("ok") is False, json.dumps(r)[:90])
+        check("b. and says the file changed underneath",
+              r.get("status") == "changed-underneath", str(r.get("status")))
+        check("b. the message is for a human, not a stack trace",
+              "changed on disk" in str(r.get("error", "")), str(r.get("error"))[:90])
+        check("b. nothing was written", target.read_text() == before_ext)
+        check("b. the other process's change is still there",
+              "added by another process entirely" in target.read_text())
+
+        # (c) after the re-read, a subsequent edit succeeds against the new content
+        fresh = next(u for u in call("/__units")
+                     if u["editable"] and len(u["raw"].strip()) > 60)
+        r = call("/__edit", {"id": fresh["id"], "text": "AFTER THE RE-READ",
+                             "author": "Julia"})
+        check("c. the next attempt succeeds against the new content", r.get("ok"),
+              json.dumps(r)[:90])
+        check("c. and it landed", "AFTER THE RE-READ" in target.read_text())
+
+        # (d) an approval is guarded on the same path
+        call("/")
+        au = next(u for u in call("/__units")
+                  if u["editable"] and len(u["raw"].strip()) > 60)
+        cid_x = call("/__comment", {"unit": au["id"], "quote": "",
+                                    "comment": "guarded approval"})["id"]
+        call("/__propose", {"id": cid_x, "unit": au["id"], "text": "APPROVED MID-CHANGE"})
+        time.sleep(0.01)
+        target.write_text(target.read_text().replace(
+            "</body>", "<p>and another outside change</p></body>", 1))
+        before_x = target.read_text()
+        r = call("/__approve", {"id": cid_x})
+        check("d. an approval is refused the same way",
+              r.get("status") == "changed-underneath", json.dumps(r)[:90])
+        check("d. and the proposal did not reach the file",
+              target.read_text() == before_x)
+
+        # (e) A10: each malformed document is served read-only with a reason
+        import glob as _glob
+        mal = sorted(_glob.glob(str(ROOT / "tests" / "fixtures" / "malformed" / "*.html")))
+        check("e. there are malformed fixtures to serve", len(mal) == 4, str(len(mal)))
+        served_ro, raised = [], []
+        for mpath in mal:
+            mp = Path(mpath)
+            mtarget = TMP / ("mal-" + mp.name)
+            shutil.copy(mp, mtarget)
+            mport = PORT + 3
+            mproc = subprocess.Popen(
+                [sys.executable, str(ROOT / "server.py"), str(mtarget),
+                 "--port", str(mport), "--author", "Julia", "--idle-timeout", "0"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            main_base, main_token, main_origin = BASE, TOKEN, ORIGIN
+            BASE = f"http://127.0.0.1:{mport}"
+            try:
+                up = False
+                for _ in range(60):
+                    try:
+                        call("/info"); up = True; break
+                    except Exception:
+                        time.sleep(0.1)
+                if not up:
+                    raised.append(mp.name)
+                    continue
+                page_m = call("/")
+                TOKEN = _read_token(page_m)
+                ORIGIN = f"http://127.0.0.1:{mport}"
+                cfg_ro = '"readOnly": true' in page_m
+                mu = call("/__units")
+                all_locked = bool(mu) and all(not u["editable"] for u in mu)
+                reasoned = all(u.get("reason") for u in mu if not u["editable"])
+                if cfg_ro:
+                    served_ro.append(mp.name)
+                    # and a write is actually refused, not merely discouraged
+                    if mu:
+                        before_m = mtarget.read_text()
+                        rr = call("/__edit", {"id": mu[0]["id"], "text": "NOPE",
+                                              "author": "Julia"})
+                        if rr.get("ok") or mtarget.read_text() != before_m:
+                            raised.append(mp.name + " (write not refused)")
+                    if not (all_locked and reasoned):
+                        raised.append(mp.name + " (regions not all locked with a reason)")
+            finally:
+                BASE, TOKEN, ORIGIN = main_base, main_token, main_origin
+                mproc.terminate()
+                try:
+                    mproc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    mproc.kill()
+
+        check("e. every malformed document served without the server dying",
+              not [x for x in raised if "(" not in x], str(raised))
+        check("e. the unreadable ones are served read-only, locked, with a reason",
+              set(served_ro) >= {"truncated.html", "unclosed.html"},
+              f"read-only: {sorted(served_ro)}")
+        check("e. and no read-only document accepted a write",
+              not [x for x in raised if "(" in x], str(raised))
+
     finally:
         proc.terminate()
         try:

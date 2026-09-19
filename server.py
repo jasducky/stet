@@ -67,6 +67,14 @@ def iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+class ExternalChange(RuntimeError):
+    """The file changed on disk since the server last read it.
+
+    R7.1. A byte-range write assumes the source is unchanged since it was read.
+    This is what keeps that assumption honest rather than hoping for it.
+    """
+
+
 class Store:
     """Everything the agent reads lives in .review/ beside the artefact."""
 
@@ -77,17 +85,78 @@ class Store:
         self.comments = self.dir / "comments.json"
         self.edits = self.dir / "edits.md"
         self.inbox = self.dir / "inbox.jsonl"
+        self._seen = None          # fingerprint as of the last read we served
+        self.note_state()
+
+    # --- external modification (R7) ---
+    def fingerprint(self):
+        """Cheap identity for the file's current contents."""
+        try:
+            s = self.target.stat()
+            return (s.st_mtime_ns, s.st_size)
+        except OSError:
+            return None
+
+    def note_state(self):
+        """Record the file as we have just read it. Called after every write we
+        make ourselves, and whenever the page is served."""
+        self._seen = self.fingerprint()
+
+    def check_unchanged(self):
+        """Raise if somebody else has written to the file since we last read it.
+
+        The refusal deliberately re-reads afterwards, so the human's next
+        attempt works against the new content rather than failing for ever.
+        """
+        now = self.fingerprint()
+        if self._seen is not None and now != self._seen:
+            self.note_state()
+            raise ExternalChange(
+                "the file changed on disk while you were reviewing it, so this "
+                "write was not applied - the page has been re-read, and trying "
+                "again will work against the new content")
 
     # --- document ---
     def text(self):
         return self.target.read_text()
 
+    def read(self):
+        """(text, units, problems) - the single place that decides what this
+        document currently is.
+
+        Every consumer goes through here: serving, /__units, and the write path.
+        They used to parse separately, so the served page could say read-only
+        while /__units still reported the same regions as editable - two answers
+        to one question, and an agent reading the endpoint would believe the
+        wrong one.
+        """
+        text = self.text()
+        units, problems = html_doc.parse_safe(text)
+        if problems:
+            for u in units:
+                u.editable = False
+                u.reason = problems[0]
+        return text, units, problems
+
     def units(self):
-        return html_doc.parse(self.text())
+        return self.read()[1]
 
     def apply_edit(self, unit_id, new_inner, author):
-        text = self.text()
-        units = self.units()
+        # R7.1 before anything else: if the bytes moved under us, nothing below
+        # is computed against the file we are about to write to.
+        self.check_unchanged()
+
+        # ONE read, and the units parsed from THAT text. These were two separate
+        # reads, so a write could be composed from one snapshot of the file with
+        # byte offsets taken from another - the exact failure R7 exists to stop,
+        # in the tightest possible window.
+        text, units, problems = self.read()
+
+        # R1.4/A10 here rather than in the HTTP handler, for the same reason the
+        # payload validator lives here: --approve never touches a handler.
+        if problems:
+            raise ValueError("this document is served read-only: " + problems[0])
+
         unit = next((u for u in units if u.id == unit_id), None)
         if unit is None:
             raise KeyError(unit_id)
@@ -102,6 +171,7 @@ class Store:
         html_doc.validate_edit(new_inner, before)
 
         self.target.write_text(html_doc.write(text, units, unit_id, new_inner))
+        self.note_state()          # our own write is not an external change
         self.log_edit(unit_id, unit.tag, before, new_inner, author)
         return True
 
@@ -252,8 +322,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json([u.to_json(text) for u in st.units()])
 
         if path in ("/", "/index.html"):
-            text = st.text()
-            units = st.units()
+            # R1.4 / A10: a document that cannot be read properly is served
+            # READ-ONLY with the reason, never silently as a handful of regions
+            # a recovery pass happened to find.
+            text, units, problems = st.read()
+            st.note_state()        # this is the content the human is now looking at
             locked = {u.id for u in units if not u.editable}
 
             # A fresh nonce per response. Not 'self': the artefact's own sibling
@@ -264,7 +337,9 @@ class Handler(BaseHTTPRequestHandler):
                    "base-uri 'none'")
             page = inject(text, units, locked, {
                 "author": self.author, "name": st.target.name,
-                "token": SESSION_TOKEN, "scriptsDisabled": True}, nonce)
+                "token": SESSION_TOKEN, "scriptsDisabled": True,
+                "readOnly": bool(problems),
+                "readOnlyReason": problems[0] if problems else ""}, nonce)
             return self._send(200, page, extra={"Content-Security-Policy": csp})
 
         return self._send(404, "not found")
@@ -337,6 +412,9 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/__edit":
             try:
                 changed = st.apply_edit(data["id"], data.get("text", ""), who)
+            except ExternalChange as e:
+                return self._json({"ok": False, "status": "changed-underneath",
+                                   "error": str(e)}, 409)
             except (KeyError, ValueError) as e:
                 return self._json({"ok": False, "error": str(e)}, 400)
             # No author filtering at write time. The stream is the record;
@@ -452,6 +530,9 @@ class Handler(BaseHTTPRequestHandler):
             landed = hits[0]
             try:
                 st.apply_edit(landed.id, pr["text"], "Claude (approved)")
+            except ExternalChange as e:
+                return self._json({"ok": False, "status": "changed-underneath",
+                                   "error": str(e)}, 409)
             except (KeyError, ValueError) as e:
                 return self._json({"ok": False, "status": "refused",
                                    "error": str(e)}, 400)

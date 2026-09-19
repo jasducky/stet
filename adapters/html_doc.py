@@ -20,6 +20,7 @@ span survives byte for byte, and git diffs stay readable.
 
 import hashlib
 import re
+import sys
 from html.parser import HTMLParser
 
 # Text inside these belongs to the parent, never to a unit of its own.
@@ -107,6 +108,11 @@ class _Builder(HTMLParser):
         self._opaque_tag = None
         self._opaque_inner = 0
         self.scripts = []
+        # Elements closed by somebody else's end tag rather than their own.
+        # Recovery is deliberate and correct, but it means the region set is a
+        # reconstruction, and R1.4 says that has to be reported rather than
+        # returned silently.
+        self.implied_closes = []
 
     def _off(self):
         line, col = self.getpos()
@@ -148,6 +154,9 @@ class _Builder(HTMLParser):
                     if node.inner_end is None:
                         node.inner_end = close
                         node.end = close + len(tag) + 3
+                # everything above the match was never closed by its own tag
+                self.implied_closes.extend(
+                    n.tag for n in self.stack[i + 1:] if getattr(n, "tag", None))
                 del self.stack[i:]
                 return
 
@@ -461,3 +470,72 @@ def find_anchor(text, units, anchor):
     if not needle:
         return []
     return [u for u in units if needle in anchor_text(u.raw(text))]
+
+
+# ------------------------------------------------------------- diagnostics
+
+# Deep nesting recurses per element. Raising the ceiling for the duration of a
+# parse turns "crashes on a generated document" into "handles a generated
+# document", and anything past even this is reported rather than raised.
+_DEPTH_CEILING = 20000
+
+
+def parse_safe(text):
+    """(units, problems). Never raises on a document, however broken.
+
+    R1.4 has two halves and only the first was met: discovery must not crash,
+    AND a document that cannot be parsed must be REPORTED as such and served
+    read-only. Recovery was silent, so a near-empty region set was
+    indistinguishable from a document that genuinely holds one editable block.
+
+    `problems` is the second half. A non-empty list means the document is not
+    safe to write to, and the reason is human-readable.
+    """
+    problems = []
+    limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(max(limit, _DEPTH_CEILING))
+        try:
+            units = parse(text)
+        except RecursionError:
+            return [], ["nested too deeply to read: this document nests elements "
+                        "past the depth this parser can follow, so no region in it "
+                        "can be edited safely"]
+        except Exception as exc:                  # noqa: BLE001 - never crash
+            return [], [f"could not be read: {type(exc).__name__}"]
+    finally:
+        sys.setrecursionlimit(limit)
+
+    # Elements still open at end of file. A browser recovers from these
+    # silently, and so does this parser - but the region set it recovers is not
+    # the document the author wrote, so writing into it is not safe.
+    b = _Builder(text)
+    try:
+        b.feed(text)
+        b.close()
+    except Exception:                             # noqa: BLE001
+        problems.append("could not be read: the markup could not be scanned")
+        return units, problems
+
+    implied = list(b.implied_closes)
+    if implied:
+        shown = ", ".join(f"<{t}>" for t in implied[:6])
+        more = f" and {len(implied) - 6} more" if len(implied) > 6 else ""
+        problems.append(
+            f"{len(implied)} element(s) are closed by another element's end tag "
+            f"({shown}{more}), so the regions found are a reconstruction rather "
+            f"than the document as written")
+
+    unclosed = [n.tag for n in b.stack[1:] if getattr(n, "tag", None)]
+    if unclosed:
+        shown = ", ".join(f"<{t}>" for t in unclosed[:6])
+        more = f" and {len(unclosed) - 6} more" if len(unclosed) > 6 else ""
+        problems.append(f"{len(unclosed)} element(s) are never closed ({shown}{more}), "
+                        f"so the regions found are a guess rather than the document")
+
+    # Truncated mid-tag: an unterminated "<" after the last ">".
+    tail = text[text.rfind(">") + 1:] if ">" in text else text
+    if "<" in tail:
+        problems.append("the file ends inside a tag, so it is incomplete")
+
+    return units, problems
