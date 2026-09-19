@@ -2,6 +2,7 @@
 """artefact-review - edit and comment on any Claude HTML artefact, locally.
 
     python3 server.py <file.html> [--port 8790] [--author NAME] [--detach]
+                                  [--idle-timeout 900] [--max-life 28800]
     python3 server.py --approve <cid>            apply a proposal from the CLI
     python3 server.py --status  <cid> <status> ["note"]
 
@@ -34,6 +35,14 @@ from adapters import html_doc  # noqa: E402
 HERE = Path(__file__).resolve().parent
 INITIAL_PPID = os.getppid()
 _last_hit = time.time()
+_started = time.time()
+
+
+def touch():
+    """Mark human interaction. R6.7: the idle clock counts edits, comments and
+    approvals - and the page being opened - never the client's version poll."""
+    global _last_hit
+    _last_hit = time.time()
 
 # R2.5. Minted once per server process, injected into the served page, and never
 # written to disk - nothing under .review/ may contain it, because that directory
@@ -49,6 +58,24 @@ SESSION_TOKEN = secrets.token_urlsafe(32)
 # opposite of the thing being tested. There is no endpoint, header or parameter
 # that can set it.
 GATE_DISABLED = os.environ.get("RV_GATE_DISABLED") == "1"
+
+# R6.6. Not a setting. See the bind site for why there is no flag.
+LOOPBACK = "127.0.0.1"
+
+# R6.7. How long a DETACHED server may live regardless of activity. An attached
+# one is bounded by its parent dying, so it does not need this.
+DEFAULT_MAX_LIFE = 8 * 3600
+
+
+def _who_has(port):
+    """The file a server already on this port is serving, or None."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(
+                f"http://{LOOPBACK}:{port}/info", timeout=1.5) as r:
+            return json.loads(r.read().decode()).get("target")
+    except Exception:                       # noqa: BLE001 - not ours, or not answering
+        return None
 
 # Two endpoint classes, written down so a later reader can tell which are guarded
 # on purpose and which exemption is deliberate.
@@ -284,8 +311,12 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def end_headers(self):
-        global _last_hit
-        _last_hit = time.time()
+        # Deliberately does NOT touch the idle clock. Every response used to,
+        # and the injected client polls /__version every three seconds, so one
+        # forgotten browser tab kept a server alive for ever - and a DETACHED
+        # server skips parent-death watching, so nothing else would have stopped
+        # it. R6.7: the clock counts human interaction, which is what `touch`
+        # marks, at the few places a person actually did something.
         super().end_headers()
 
     def _send(self, code, body, ctype="text/html; charset=utf-8", extra=None):
@@ -339,6 +370,7 @@ class Handler(BaseHTTPRequestHandler):
             # a recovery pass happened to find.
             text, units, problems = st.read()
             st.note_state()        # this is the content the human is now looking at
+            touch()                # ...and opening it is human interaction
             locked = {u.id for u in units if not u.editable}
 
             # A fresh nonce per response. Not 'self': the artefact's own sibling
@@ -407,6 +439,7 @@ class Handler(BaseHTTPRequestHandler):
         if self._guard(p):
             return
 
+        touch()        # a POST is a person editing, commenting or approving
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length else b""
         try:
@@ -588,7 +621,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True})
 
 
-def watchdog(idle_timeout, watch_parent=True):
+def watchdog(idle_timeout, watch_parent=True, max_life=0):
     """Never leak a server: die when the launching process dies, or when no
     client has called for idle_timeout seconds. Borrowed from
     paraschopra/make-pages-interactive, which gets this exactly right.
@@ -605,6 +638,12 @@ def watchdog(idle_timeout, watch_parent=True):
         if idle_timeout > 0 and time.time() - _last_hit > idle_timeout:
             print(f"[review] idle >{idle_timeout}s, shutting down", flush=True)
             os._exit(0)
+        # R6.7. Independent of request activity, so a detached server cannot be
+        # kept alive indefinitely by anything a client does.
+        if max_life > 0 and time.time() - _started > max_life:
+            print(f"[review] reached its {max_life}s lifetime cap, shutting down",
+                  flush=True)
+            os._exit(0)
 
 
 def main():
@@ -615,6 +654,7 @@ def main():
 
     # CLI verbs operate on a target given by --file, or the only .review/ found
     port, author, idle = 8790, os.environ.get("USER", "user"), 900
+    max_life = DEFAULT_MAX_LIFE
     detach = False
     target = None
     rest = []
@@ -629,6 +669,8 @@ def main():
             idle = int(args[i + 1]); i += 2
         elif a == "--detach":
             detach = True; i += 1
+        elif a == "--max-life":
+            max_life = int(args[i + 1]); i += 2
         elif a.startswith("--"):
             rest.append(a); i += 1
         elif target is None and a.endswith((".html", ".htm")):
@@ -698,11 +740,58 @@ def main():
     if not detach:
         shutdown.append("parent-death")
     if idle > 0:
-        shutdown.append(f"{idle}s idle")
+        shutdown.append(f"{idle}s idle (human interaction only)")
+    if detach and max_life > 0:
+        shutdown.append(f"{max_life}s lifetime cap")
     print(f"  shutdown : {' or '.join(shutdown) if shutdown else 'manual only'}")
 
-    threading.Thread(target=watchdog, args=(idle, not detach), daemon=True).start()
-    HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    # R6.6. Loopback, always. There is deliberately no flag for this: exposure
+    # beyond the local machine is permanently out of scope, and an option to
+    # change it is the first step to it being changed.
+    try:
+        httpd = HTTPServer((LOOPBACK, port), Handler)
+    except OSError as e:
+        # R6.4. Say which file the server already on this port is serving, so
+        # "address already in use" is actionable rather than a puzzle.
+        busy = _who_has(port)
+        print(f"error: port {port} is already in use", file=sys.stderr)
+        if busy:
+            print(f"  it is serving: {busy}", file=sys.stderr)
+            print(f"  open http://localhost:{port}/ , or use --port for another",
+                  file=sys.stderr)
+        else:
+            print(f"  ({e})", file=sys.stderr)
+        sys.exit(1)
+
+    if detach:
+        # R6.3. Genuinely detach, so the launching shell returns at once. This
+        # exists for an agent starting the server unattended as step 0 of the
+        # agent's turn; a human at a terminal already has nohup and &.
+        pid = os.fork()
+        if pid > 0:
+            print(f"  detached : pid {pid}, lifetime cap {max_life}s")
+            sys.stdout.flush()
+            os._exit(0)             # the parent returns the shell immediately
+        os.setsid()
+        # Release the launching process's stdio, not just stdin. Closing the
+        # parent alone is not enough: the child inherits the same stdout and
+        # stderr, so anything reading them - a shell pipeline, subprocess.run
+        # with capture_output - blocks waiting for EOF that never comes, and the
+        # launcher hangs exactly as if --detach had done nothing. Found by the
+        # test for this requirement rather than in use.
+        devnull = os.open(os.devnull, os.O_RDWR)
+        os.dup2(devnull, 0)
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        if devnull > 2:
+            os.close(devnull)
+
+    threading.Thread(
+        target=watchdog,
+        args=(idle, not detach),
+        kwargs={"max_life": max_life if detach else 0},
+        daemon=True).start()
+    httpd.serve_forever()
 
 
 if __name__ == "__main__":

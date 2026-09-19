@@ -472,7 +472,15 @@ Nothing in that loop requires a capability specific to any agent. It is a comman
 - **R6.7** **A detached server has an absolute lifetime cap independent of request activity.** The
   idle clock counts human interaction — edit, comment, approve — not the client's version poll.
 
-> **Known defect (R6.3, R6.5, R6.7).** `--detach` holds the terminal. Worse, it is
+> **RESOLVED 19 September 2026 by U14.** `--detach` forks and calls `setsid`, releasing all three
+> standard descriptors - releasing only the parent is not enough, because the child inherits stdout
+> and stderr and the launcher still blocks on EOF. The idle clock is marked at human interaction
+> only (opening the page, any POST), never on a response, so the client's poll cannot hold a server
+> open. A detached server also has an absolute lifetime cap, default 8h, `--max-life` to change it,
+> independent of request activity. All three are asserted in `e2e.py` §12, and each is
+> mutation-tested.
+>
+> **Known defect (R6.3, R6.5, R6.7), now fixed.** `--detach` held the terminal. Worse, it was
 > self-contradictory with R6.5 as built: detaching skips parent-death watching
 > (`server.py:361`), and the injected client polls `/__version` every 3 seconds
 > (`lib/review.js:312-322`) while every response resets `_last_hit` (`server.py:144`). One forgotten

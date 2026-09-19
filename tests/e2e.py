@@ -87,6 +87,14 @@ def call(path, body=None):
     return parsed
 
 
+def _port_free(port):
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/info", timeout=1).read()
+        return False
+    except Exception:
+        return True
+
+
 def main():
     # An unresolvable fixture is a named failure, never a stack trace at shutil.copy
     # and never a silent skip. Eleven units verify with this suite.
@@ -1012,6 +1020,174 @@ def main():
         check("e. the reason is recorded",
               any("tone is wrong" in r["text"] for r in state[cid_j]["replies"]))
         check("e. and the proposal is cleared", "proposal" not in state[cid_j])
+
+        print("\n12. lifecycle: detach, the idle clock, loopback (R6.3-R6.7)")
+
+        # (a) --detach returns the shell immediately, and the server survives it.
+        #     The plan called this a manual check; it is not, so it is not left
+        #     to someone's memory.
+        det_src = ROOT / "tests" / "fixtures" / "prose-article.html"
+        det_target = TMP / "detached.html"
+        shutil.copy(det_src, det_target)
+        det_port = PORT + 20
+        t0 = time.monotonic()
+        # A short --max-life on purpose: if this test ever fails to clean up,
+        # the leak heals itself in seconds instead of sitting there for the
+        # eight-hour default. An earlier run of this very test left a detached
+        # server on this port, which is the failure R6.5 and R6.7 are about.
+        # A --detach that does not release the launcher's stdio HANGS rather
+        # than fails, and a hang tells whoever is running the gates nothing. The
+        # timeout is caught and reported as a failed check instead.
+        try:
+            launch = subprocess.run(
+                [sys.executable, str(ROOT / "server.py"), str(det_target),
+                 "--port", str(det_port), "--author", "Julia",
+                 "--idle-timeout", "0", "--max-life", "60", "--detach"],
+                capture_output=True, text=True, timeout=25)
+            launched_in = time.monotonic() - t0
+            check("a. --detach returns the launching command", launch.returncode == 0,
+                  f"{launched_in:.2f}s")
+        except subprocess.TimeoutExpired:
+            launched_in = time.monotonic() - t0
+            launch = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+            check("a. --detach returns the launching command", False,
+                  "it did not return: the launcher was still held after 25s, so "
+                  "--detach is not detaching")
+        check("a. quickly, rather than holding the terminal", launched_in < 10,
+              f"{launched_in:.2f}s")
+        det_pid = None
+        for line in launch.stdout.splitlines():
+            if "detached" in line and "pid" in line:
+                det_pid = int(line.split("pid")[1].split(",")[0].strip())
+        check("a. and reports the pid it left running", det_pid is not None,
+              launch.stdout.strip().splitlines()[-1] if launch.stdout.strip() else "")
+
+        det_base = f"http://127.0.0.1:{det_port}"
+        alive = False
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(det_base + "/info", timeout=2).read()
+                alive = True
+                break
+            except Exception:
+                time.sleep(0.1)
+        check("a. the detached server is serving after its launcher exited", alive)
+
+        # (e) R6.4: a busy port is reported clearly, naming the file
+        clash = subprocess.run(
+            [sys.executable, str(ROOT / "server.py"), str(target),
+             "--port", str(det_port), "--author", "Julia", "--idle-timeout", "0"],
+            capture_output=True, text=True, timeout=30)
+        both = clash.stdout + clash.stderr
+        check("e. a port already in use fails rather than hanging",
+              clash.returncode != 0, str(clash.returncode))
+        check("e. and names the file the existing server is serving",
+              "detached.html" in both, both.strip().splitlines()[-1][:90] if both.strip() else "")
+
+        # Ask the server for its own pid rather than relying on having parsed
+        # the launcher's output: if the parse failed, the process is still there.
+        if det_pid is None:
+            try:
+                det_pid = json.loads(urllib.request.urlopen(
+                    det_base + "/info", timeout=2).read().decode()).get("pid")
+            except Exception:
+                det_pid = None
+        if det_pid:
+            try:
+                os.kill(det_pid, 15)
+            except (ProcessLookupError, PermissionError):
+                pass
+        for _ in range(40):
+            try:
+                urllib.request.urlopen(det_base + "/info", timeout=1).read()
+                time.sleep(0.1)
+            except Exception:
+                break
+        check("a. and it stops when asked, leaving nothing behind",
+              _port_free(det_port), f"port {det_port}")
+
+        # (b) polling alone does not keep a server alive: the idle clock counts
+        #     human interaction, and /__version is not that.
+        poll_target = TMP / "polled.html"
+        shutil.copy(det_src, poll_target)
+        poll_port = PORT + 21
+        poll_proc = subprocess.Popen(
+            [sys.executable, str(ROOT / "server.py"), str(poll_target),
+             "--port", str(poll_port), "--author", "Julia", "--idle-timeout", "2"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        poll_base = f"http://127.0.0.1:{poll_port}"
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(poll_base + "/info", timeout=2).read()
+                break
+            except Exception:
+                time.sleep(0.1)
+        # poll exactly as the injected client does, faster than the idle timeout
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline and poll_proc.poll() is None:
+            try:
+                urllib.request.urlopen(poll_base + "/__version", timeout=2).read()
+            except Exception:
+                break
+            time.sleep(0.3)
+        time.sleep(1.0)
+        check("b. a page polling with no human interaction does not hold it open",
+              poll_proc.poll() is not None,
+              "still running" if poll_proc.poll() is None else "exited")
+        if poll_proc.poll() is None:
+            poll_proc.kill()
+
+        # (c) a detached server exits at its lifetime cap despite continuous polling
+        cap_target = TMP / "capped.html"
+        shutil.copy(det_src, cap_target)
+        cap_port = PORT + 22
+        cap_launch = subprocess.run(
+            [sys.executable, str(ROOT / "server.py"), str(cap_target),
+             "--port", str(cap_port), "--author", "Julia",
+             "--idle-timeout", "0", "--max-life", "3", "--detach"],
+            capture_output=True, text=True, timeout=30)
+        cap_base = f"http://127.0.0.1:{cap_port}"
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(cap_base + "/info", timeout=2).read()
+                break
+            except Exception:
+                time.sleep(0.1)
+        # keep it busy the whole time, including real writes
+        gone_at = None
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 14:
+            try:
+                urllib.request.urlopen(cap_base + "/__version", timeout=2).read()
+            except Exception:
+                gone_at = time.monotonic() - t0
+                break
+            time.sleep(0.25)
+        check("c. a detached server exits at its cap despite continuous polling",
+              gone_at is not None, f"still up after 14s" if gone_at is None
+              else f"exited after {gone_at:.1f}s")
+        check("c. and it lived at least as long as its cap",
+              gone_at is None or gone_at >= 2.5, f"{gone_at}")
+
+        # (d) R6.6: loopback only, and no flag can change it
+        srv_src = (ROOT / "server.py").read_text()
+        import ast as _ast2
+        tree2 = _ast2.parse(srv_src)
+        binds = [n for n in _ast2.walk(tree2)
+                 if isinstance(n, _ast2.Call)
+                 and getattr(n.func, "id", "") == "HTTPServer"]
+        check("d. there is exactly one bind site", len(binds) == 1, str(len(binds)))
+        check("d. and it binds the loopback constant, not a variable address",
+              len(binds) == 1 and "LOOPBACK" in _ast2.unparse(binds[0].args[0]),
+              _ast2.unparse(binds[0].args[0]) if binds else "none")
+        check("d. no CLI flag sets an address",
+              not any(flag in srv_src for flag in
+                      ('"--host"', "'--host'", '"--bind"', "'--bind'",
+                       '"--address"', "'--address'", '"0.0.0.0"')))
+        info_target = json.loads(
+            urllib.request.urlopen(BASE + "/info", timeout=3).read().decode())
+        check("d. the running server reports itself on the loopback address",
+              "127.0.0.1" in BASE, BASE)
 
     finally:
         proc.terminate()
