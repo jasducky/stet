@@ -146,6 +146,33 @@ more than an overstatement: it is the only tool that gates an agent's *individua
 **Test:** an agent writes the file directly while served. The next approval is refused, and the
 human is told the file changed underneath. That test fails if the gate's real guarantee breaks.
 
+> **IMPLEMENTED 19 September 2026 by U13, with a seam.** The previous wording of this invariant was
+> tested as *"there is no code path from `/__propose` to a write"* — true, and passing while all
+> three bypasses above exist. A test that cannot fail is not a test.
+>
+> `e2e.py` now runs the I6 case **twice**: against an ordinary server, where the direct write must be
+> detected and the approval refused, and against one started with `RV_GATE_DISABLED=1`, where it must
+> **not** be. An ordinary `python3 tests/e2e.py` therefore proves the assertion is one that can fail,
+> rather than leaving that to be re-performed by hand at every publish.
+>
+> Gate 3 is one command and its exit code:
+>
+> ```bash
+> RV_GATE_DISABLED=1 python3 tests/e2e.py    # must exit non-zero
+> ```
+>
+> **The seam is not reachable from a request.** It is read from the environment once, at import.
+> `e2e.py` asserts that against the **parse tree** — `GATE_DISABLED` is assigned exactly once, only
+> from `os.environ`, and neither the name nor the string appears anywhere inside the request handler.
+> An earlier version of that check split the source on `"def do_POST"` and failed on a startup
+> `print` that merely sat later in the file: a check reporting on where lines happen to be rather
+> than on what the code does.
+>
+> **What this proves, stated plainly.** With the seam off, this and R7's first scenario assert the
+> same behaviour. That is intended: under the cooperative framing, detection *is* the guarantee. It
+> proves the detection is live. It does not prove the gate is unbypassable, which it is not, by
+> design.
+
 ### Deferred: the enforced gate
 
 Not scheduled. Recorded so the choice is visible rather than forgotten, and so the spec is not

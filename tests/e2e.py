@@ -4,6 +4,7 @@ whole loop over HTTP - edit, comment, propose, approve - then verify the file
 on disk actually changed and that nothing outside the edited span moved.
 """
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -878,6 +879,139 @@ def main():
               f"read-only: {sorted(served_ro)}")
         check("e. and no read-only document accepted a write",
               not [x for x in raised if "(" in x], str(raised))
+
+        print("\n11. the cooperative gate, tested with a seam (I6)")
+
+        # I6's old test was "there is no code path from /__propose to a write".
+        # That is true, and passes while every one of the three known bypasses
+        # exists. A test that cannot fail is not a test, so this asserts what the
+        # cooperative gate actually guarantees: an agent that writes the file
+        # directly is DETECTED and the human is told.
+        #
+        # The case is run TWICE against two servers - one ordinary, one with the
+        # seam on - so gate 3 is this command and its exit code, not a procedure
+        # someone has to remember to perform by hand at every publish.
+
+        def i6_case(env_extra, port_offset, label):
+            """Agent writes the file directly while served. Returns (refused, wrote)."""
+            src = ROOT / "tests" / "fixtures" / "prose-article.html"
+            tgt = TMP / f"i6-{label}.html"
+            shutil.copy(src, tgt)
+            port = PORT + 10 + port_offset
+            env = dict(os.environ)
+            env.update(env_extra)
+            proc_i6 = subprocess.Popen(
+                [sys.executable, str(ROOT / "server.py"), str(tgt),
+                 "--port", str(port), "--author", "Julia", "--idle-timeout", "0"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+            main_base, main_token, main_origin = BASE, TOKEN, ORIGIN
+            globals()["BASE"] = f"http://127.0.0.1:{port}"
+            try:
+                for _ in range(60):
+                    try:
+                        call("/info"); break
+                    except Exception:
+                        time.sleep(0.1)
+                page_i6 = call("/")
+                globals()["TOKEN"] = _read_token(page_i6)
+                globals()["ORIGIN"] = f"http://127.0.0.1:{port}"
+
+                u = next(x for x in call("/__units")
+                         if x["editable"] and len(x["raw"].strip()) > 60)
+                cid = call("/__comment", {"unit": u["id"], "quote": "",
+                                          "comment": "gate case"})["id"]
+                call("/__propose", {"id": cid, "unit": u["id"],
+                                    "text": "APPROVED AFTER A DIRECT WRITE"})
+
+                # the agent goes round the server entirely, with its own file tools
+                time.sleep(0.01)
+                tgt.write_text(tgt.read_text().replace(
+                    "</body>", "<p>written directly by an agent</p></body>", 1))
+
+                before = tgt.read_text()
+                r = call("/__approve", {"id": cid})
+                refused = r.get("status") == "changed-underneath"
+                wrote = tgt.read_text() != before
+                return refused, wrote, r
+            finally:
+                globals()["BASE"], globals()["TOKEN"], globals()["ORIGIN"] = \
+                    main_base, main_token, main_origin
+                proc_i6.terminate()
+                try:
+                    proc_i6.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc_i6.kill()
+
+        # The seam is inherited from the ambient environment here ON PURPOSE.
+        # Under an ordinary run it is off and this must refuse; under
+        # RV_GATE_DISABLED=1 python3 tests/e2e.py it is on and this must fail,
+        # which is what makes that command gate 3.
+        refused_on, wrote_on, resp_on = i6_case({}, 0, "gate-live")
+        check("a. an agent's direct write is detected and the approval refused",
+              refused_on, json.dumps(resp_on)[:100])
+        check("a. and the proposal did not reach the file", not wrote_on)
+        check("a. the human is told what happened, in words",
+              "changed on disk" in str(resp_on.get("error", "")),
+              str(resp_on.get("error"))[:90])
+
+        # the same case with the detection switched off: it must NOT be detected
+        refused_off, wrote_off, resp_off = i6_case({"RV_GATE_DISABLED": "1"}, 1, "gate-off")
+        check("b. with RV_GATE_DISABLED=1 the same case is NOT detected",
+              not refused_off, json.dumps(resp_off)[:100])
+        check("b. so the assertion above is one that can fail", refused_on and not refused_off)
+
+        # The seam must not be reachable from a request. Checked against the
+        # PARSE TREE rather than by splitting the source on text: an earlier
+        # version of this check split on "def do_POST" and failed on a startup
+        # print that merely sits later in the file, which is a check reporting on
+        # where lines happen to be rather than on what the code does.
+        import ast as _ast
+        tree = _ast.parse((ROOT / "server.py").read_text())
+
+        assigns = [n for n in _ast.walk(tree)
+                   if isinstance(n, _ast.Assign)
+                   and any(isinstance(tgt, _ast.Name) and tgt.id == "GATE_DISABLED"
+                           for tgt in n.targets)]
+        check("c. the seam is assigned exactly once", len(assigns) == 1, str(len(assigns)))
+        check("c. and only from the environment",
+              len(assigns) == 1 and "os.environ" in _ast.unparse(assigns[0].value),
+              _ast.unparse(assigns[0].value)[:60] if assigns else "none")
+
+        handler = next((n for n in _ast.walk(tree)
+                        if isinstance(n, _ast.ClassDef) and n.name == "Handler"), None)
+        check("c. the request handler exists to check", handler is not None)
+        names_in_handler = {n.id for n in _ast.walk(handler) if isinstance(n, _ast.Name)}
+        strings_in_handler = {n.value for n in _ast.walk(handler)
+                              if isinstance(n, _ast.Constant) and isinstance(n.value, str)}
+        check("c. no request path reads the seam, by name or by string",
+              "GATE_DISABLED" not in names_in_handler
+              and not any("RV_GATE_DISABLED" in s for s in strings_in_handler))
+
+        # (d) a proposal never approved never appears in the file
+        nu = next(u for u in call("/__units")
+                  if u["editable"] and len(u["raw"].strip()) > 60)
+        cid_n = call("/__comment", {"unit": nu["id"], "quote": "",
+                                    "comment": "never approved"})["id"]
+        call("/__propose", {"id": cid_n, "unit": nu["id"],
+                            "text": "NEVER APPROVED SO NEVER WRITTEN"})
+        check("d. a proposal never approved is not in the file",
+              "NEVER APPROVED SO NEVER WRITTEN" not in target.read_text())
+        state = {x["id"]: x for x in call("/__comments")}
+        check("d. and it is still recorded, waiting",
+              state[cid_n]["status"] == "proposed")
+
+        # (e) a rejected proposal never appears, and the reason is recorded
+        cid_j = call("/__comment", {"unit": nu["id"], "quote": "",
+                                    "comment": "to be rejected"})["id"]
+        call("/__propose", {"id": cid_j, "unit": nu["id"],
+                            "text": "REJECTED SO NEVER WRITTEN"})
+        call("/__reject", {"id": cid_j, "reason": "the tone is wrong"})
+        check("e. a rejected proposal is not in the file",
+              "REJECTED SO NEVER WRITTEN" not in target.read_text())
+        state = {x["id"]: x for x in call("/__comments")}
+        check("e. the reason is recorded",
+              any("tone is wrong" in r["text"] for r in state[cid_j]["replies"]))
+        check("e. and the proposal is cleared", "proposal" not in state[cid_j])
 
     finally:
         proc.terminate()

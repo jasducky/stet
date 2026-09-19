@@ -40,6 +40,16 @@ _last_hit = time.time()
 # is what an agent reads.
 SESSION_TOKEN = secrets.token_urlsafe(32)
 
+# I6, gate 3. A test-only seam that switches OFF the pre-write freshness
+# re-check, so the suite can assert that the detection is live rather than
+# assert that someone remembers it is.
+#
+# Read from the ENVIRONMENT at import, once, and never from a request. A seam
+# reachable over HTTP would be a bypass rather than a test fixture, which is the
+# opposite of the thing being tested. There is no endpoint, header or parameter
+# that can set it.
+GATE_DISABLED = os.environ.get("RV_GATE_DISABLED") == "1"
+
 # Two endpoint classes, written down so a later reader can tell which are guarded
 # on purpose and which exemption is deliberate.
 #
@@ -108,6 +118,8 @@ class Store:
         The refusal deliberately re-reads afterwards, so the human's next
         attempt works against the new content rather than failing for ever.
         """
+        if GATE_DISABLED:
+            return                 # the seam; see GATE_DISABLED above
         now = self.fingerprint()
         if self._seen is not None and now != self._seen:
             self.note_state()
@@ -673,6 +685,10 @@ def main():
     Handler.store = store
     Handler.author = author
 
+    if GATE_DISABLED:
+        print("[review] *** RV_GATE_DISABLED=1: external-modification detection "
+              "is OFF. This is a test seam, not a mode to serve real work in. ***",
+              flush=True)
     print(f"artefact-review -> http://localhost:{port}")
     print(f"  target   : {target}")
     print(f"  units    : {len(units)} editable regions"

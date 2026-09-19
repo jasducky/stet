@@ -103,9 +103,34 @@ The server never leaks: it exits when the process that launched it dies, or afte
 ## Tests
 
 ```bash
-python3 tests/probe.py    # region detection + no-overlap + byte-exact round trip
-python3 tests/e2e.py      # the full loop over HTTP against a copy of a real artefact
+pip install -r requirements.txt && playwright install chromium   # browser tests only
+
+python3 tests/probe.py     # region discovery, no overlap, byte-exact round trip,
+                           # stable ids, and malformed documents over the fixtures
+python3 tests/e2e.py       # the whole loop over HTTP: editing, comments, proposals,
+                           # the approval gate, anchoring, the event stream, watch.py,
+                           # external-modification detection
+python3 tests/browser.py   # the rendered review layer, driven in a real browser
 ```
+
+`probe.py` and `e2e.py` need nothing installed. Only `browser.py` needs a driver.
+
+### Gate 3: proving the gate's test can fail
+
+```bash
+RV_GATE_DISABLED=1 python3 tests/e2e.py    # MUST exit non-zero
+```
+
+`RV_GATE_DISABLED=1` switches off the pre-write freshness check, which is what
+detects an agent writing the file directly. With it on, the suite's I6 case is
+expected to fail — so this command failing is the evidence that the case is a
+test which *can* fail, rather than one that passes because nothing is being
+checked.
+
+It is read from the environment once, at import, and never from a request:
+there is no endpoint, header or parameter that can set it, and `e2e.py` asserts
+that against the parse tree. It is a test seam, not a mode to serve real work in,
+and the server says so loudly at startup when it is on.
 
 ---
 
