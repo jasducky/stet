@@ -336,6 +336,29 @@ have to be written. That is why it is deferred rather than done.
 > content after a split. Anchoring to a byte offset rather than a region would also skip the
 > editable check in `html_doc.py:243` and write into a locked region, defeating I5.
 
+> **IMPLEMENTED 19 September 2026 by U8.** A proposal stores `anchor`, the region's text at propose
+> time with inline markup stripped, entities resolved and whitespace collapsed
+> (`html_doc.anchor_text`). Approval searches every region's contents under the *same* function and
+> takes one of three outcomes: one match applies, more than one is `ambiguous`, none is `orphaned`.
+> Neither of the latter two writes anything or discards anything, and the anchor text is retained so
+> the proposal can be re-placed (R3.5, U9).
+>
+> **Capture and comparison share one function by design.** Comparing a plain-text anchor against raw
+> HTML is the failure the shared normalisation exists to prevent: a region carrying an `<em>` or an
+> `<a>` mid-sentence would never match, so every proposal touching an emphasis or a link would be
+> orphaned. Mutation-tested - making the comparison read raw HTML fails nine checks.
+>
+> **Applied through the same write path as a human edit**, so the locked check (I5, R2.4) and the
+> payload validator (R2.6) both still fire. An anchor resolving into a locked region is refused with
+> that lock's own reason and writes nothing; mutation-testing a byte-range write in its place fails
+> seven checks, including a script tag reaching the file and a locked region being overwritten.
+>
+> **Both doors resolve identically** (R3.7): `server.py --approve` runs the same resolution and
+> reports the same orphaned and ambiguous outcomes, because two doors that disagree about where a
+> proposal lands would be worse than one.
+>
+> **A proposal with no anchor is reported as orphaned**, never applied against its stored region id.
+
 ### R4. The watcher
 
 **The agent must be able to watch for comments, edits and replies without any agent-specific

@@ -409,3 +409,55 @@ def validate_edit(new_inner, region_inner):
             "refused: an edit may only use the inline elements already in this "
             "region (" + (", ".join(f"<{t}>" for t in sorted(allowed)) or "none")
             + "); it introduced " + ", ".join(f"<{t}>" for t in introduced))
+
+
+# ------------------------------------------------------------------ anchoring
+
+class _TextOnly(HTMLParser):
+    """Text content only: inline markup dropped, entities resolved."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.buf = []
+
+    def handle_data(self, data):
+        self.buf.append(data)
+
+
+def anchor_text(fragment):
+    """A region's contents as comparable plain text.
+
+    R3.2. Inline markup stripped, entities resolved, whitespace collapsed. A
+    region's raw contents carry tags mid-sentence in roughly a third of real
+    documents, so comparing a plain-text anchor against raw HTML would orphan
+    every proposal that happened to touch a link or an emphasis.
+
+    Capture and comparison MUST use this same function, or the normalisation is
+    not actually shared and the bug comes back quietly.
+    """
+    p = _TextOnly()
+    try:
+        p.feed(fragment)
+        p.close()
+    except Exception:                      # noqa: BLE001 - malformed is expected
+        pass
+    return _WS.sub(" ", "".join(p.buf)).strip()
+
+
+def find_anchor(text, units, anchor):
+    """Regions whose contents contain this anchor. Returns a list of Units.
+
+    R3.3. The result is a REGION, never a byte offset: resolving to an offset
+    would skip the editable check in write() and let an approved proposal land
+    inside a locked region. Searching per region also means a match spanning a
+    region boundary is simply not found, which is the required behaviour rather
+    than an accident.
+
+    Locked regions are included deliberately. An anchor that resolves into one
+    must be refused with the lock's reason, not silently skipped as though the
+    text were not there.
+    """
+    needle = _WS.sub(" ", anchor or "").strip()
+    if not needle:
+        return []
+    return [u for u in units if needle in anchor_text(u.raw(text))]

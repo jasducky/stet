@@ -123,7 +123,7 @@ def main():
         page = call("/")
         check("review layer injected", "/__lib/review.js" in page)
 
-        global TOKEN, ORIGIN
+        global BASE, TOKEN, ORIGIN
         TOKEN = _read_token(page)
         ORIGIN = f"http://127.0.0.1:{PORT}"
         check("session token minted and injected into the page",
@@ -311,7 +311,193 @@ def main():
         check("a malformed body returns a status rather than no response",
               status == 400, str(status))
 
-        print("\n7. agent event stream")
+        print("\n7. anchoring: a proposal lands on its words, or on nothing (R3.2-R3.4)")
+
+        def fresh_comment(unit_id, note="anchor test"):
+            return call("/__comment", {"unit": unit_id, "quote": "",
+                                       "comment": note})["id"]
+
+        units_now = call("/__units")
+        by_id = {u["id"]: u for u in units_now}
+
+        # (a) anchor found in exactly one region -> applies, there and nowhere else
+        solo = next(u for u in units_now
+                    if u["editable"] and len(u["raw"].strip()) > 80
+                    and "<em>" not in u["raw"] and "<strong>" not in u["raw"])
+        cid_a = fresh_comment(solo["id"])
+        call("/__propose", {"id": cid_a, "unit": solo["id"], "text": "ONE MATCH APPLIED"})
+        before = target.read_text()
+        r = call("/__approve", {"id": cid_a})
+        after = target.read_text()
+        check("a. an anchor found in one region applies", r.get("ok"), json.dumps(r)[:90])
+        check("a. the new text is in the file", "ONE MATCH APPLIED" in after)
+        check("a. only that region changed",
+              len(after) == len(before) - len(solo["raw"]) + len("ONE MATCH APPLIED"))
+
+        # (b) THE CASE THAT FAILS WITHOUT SHARED NORMALISATION: a region whose
+        # text carries <em>/<strong> mid-sentence. A plain-text anchor compared
+        # against raw HTML would never match, orphaning every such proposal.
+        inline = next((u for u in call("/__units")
+                       if u["editable"] and ("<em>" in u["raw"] or "<strong>" in u["raw"])), None)
+        if inline is None:
+            check("b. fixture has a region with inline markup mid-sentence", False,
+                  "none found - the KTD2a case is untested")
+        else:
+            cid_b = fresh_comment(inline["id"])
+            call("/__propose", {"id": cid_b, "unit": inline["id"],
+                                "text": "REWRITTEN OVER INLINE MARKUP"})
+            r = call("/__approve", {"id": cid_b})
+            check("b. an anchor in a region containing <em>/<strong> still matches",
+                  r.get("ok"), json.dumps(r)[:90])
+            check("b. and it applied", "REWRITTEN OVER INLINE MARKUP" in target.read_text())
+
+        # (c) anchor found in more than one region -> ambiguous, nothing written
+        amb_src = ROOT / "tests" / "fixtures" / "repeated-prose.html"
+        amb_target = TMP / amb_src.name
+        shutil.copy(amb_src, amb_target)
+        amb_port = PORT + 1
+        amb = subprocess.Popen(
+            [sys.executable, str(ROOT / "server.py"), str(amb_target),
+             "--port", str(amb_port), "--author", "Julia", "--idle-timeout", "0"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            main_base, main_token, main_origin = BASE, TOKEN, ORIGIN
+            BASE = f"http://127.0.0.1:{amb_port}"
+            for _ in range(50):
+                try:
+                    call("/info"); break
+                except Exception:
+                    time.sleep(0.1)
+            page2 = call("/")
+            TOKEN = _read_token(page2)
+            ORIGIN = f"http://127.0.0.1:{amb_port}"
+            au = call("/__units")
+            dup = next(u for u in au
+                       if u["editable"]
+                       and u["raw"].strip() ==
+                       "The average is the one number that cannot show you the problem.")
+            cid_c = call("/__comment", {"unit": dup["id"], "quote": "",
+                                        "comment": "ambiguous on purpose"})["id"]
+            call("/__propose", {"id": cid_c, "unit": dup["id"], "text": "SHOULD NOT LAND"})
+            amb_before = amb_target.read_text()
+            r = call("/__approve", {"id": cid_c})
+            check("c. an anchor in several regions is ambiguous",
+                  r.get("status") == "ambiguous", json.dumps(r)[:110])
+            check("c. it names how many regions matched",
+                  len(r.get("matches", [])) > 1, str(r.get("matches")))
+            check("c. and nothing was written", amb_target.read_text() == amb_before)
+            state = {x["id"]: x for x in call("/__comments")}
+            check("c. the proposal is kept, not discarded",
+                  state[cid_c].get("proposal", {}).get("text") == "SHOULD NOT LAND")
+
+            # (e) an anchor resolving into a LOCKED region is refused with the reason
+            #     (js-assembled has one; run it on its own server)
+        finally:
+            BASE, TOKEN, ORIGIN = main_base, main_token, main_origin
+            amb.terminate()
+            try:
+                amb.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                amb.kill()
+
+        # (d) anchor deleted from the document -> orphaned, anchor text retained
+        orph = next(u for u in call("/__units")
+                    if u["editable"] and len(u["raw"].strip()) > 80
+                    and u["id"] not in (solo["id"],))
+        cid_d = fresh_comment(orph["id"])
+        call("/__propose", {"id": cid_d, "unit": orph["id"], "text": "NEVER LANDS"})
+        state = {x["id"]: x for x in call("/__comments")}
+        kept_anchor = state[cid_d]["proposal"].get("anchor", "")
+        check("d. the proposal stored the text it was written against",
+              len(kept_anchor) > 30, repr(kept_anchor[:50]))
+        # a human edits those very words away
+        call("/__edit", {"id": orph["id"], "text": "completely different wording now",
+                         "author": "Julia"})
+        before = target.read_text()
+        r = call("/__approve", {"id": cid_d})
+        check("d. the proposal is orphaned", r.get("status") == "orphaned",
+              json.dumps(r)[:110])
+        check("d. nothing was written", target.read_text() == before)
+        state = {x["id"]: x for x in call("/__comments")}
+        check("d. the original anchor text is retained for re-placing",
+              state[cid_d]["proposal"].get("anchor") == kept_anchor)
+        check("d. and the proposal itself is not discarded",
+              state[cid_d]["proposal"].get("text") == "NEVER LANDS")
+
+        # (e) an anchor resolving into a LOCKED region is refused with the lock's
+        #     reason. Without this, anchoring would be a way round I5: the text
+        #     is genuinely there, so a naive resolver finds it and writes.
+        lock_src = ROOT / "tests" / "fixtures" / "js-assembled.html"
+        lock_target = TMP / lock_src.name
+        shutil.copy(lock_src, lock_target)
+        lock_port = PORT + 2
+        lk = subprocess.Popen(
+            [sys.executable, str(ROOT / "server.py"), str(lock_target),
+             "--port", str(lock_port), "--author", "Julia", "--idle-timeout", "0"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            main_base, main_token, main_origin = BASE, TOKEN, ORIGIN
+            BASE = f"http://127.0.0.1:{lock_port}"
+            for _ in range(50):
+                try:
+                    call("/info"); break
+                except Exception:
+                    time.sleep(0.1)
+            TOKEN = _read_token(call("/"))
+            ORIGIN = f"http://127.0.0.1:{lock_port}"
+            lu = call("/__units")
+            locked_unit = next((u for u in lu if not u["editable"]), None)
+            check("e. the fixture has a locked region to aim at", locked_unit is not None)
+            if locked_unit:
+                cid_e = call("/__comment", {"unit": locked_unit["id"], "quote": "",
+                                            "comment": "aim at a locked region"})["id"]
+                call("/__propose", {"id": cid_e, "unit": locked_unit["id"],
+                                    "text": "SHOULD BE REFUSED, REGION IS LOCKED"})
+                lock_before = lock_target.read_text()
+                r = call("/__approve", {"id": cid_e})
+                check("e. approving into a locked region is refused",
+                      r.get("ok") is False, json.dumps(r)[:110])
+                check("e. and the refusal carries the lock's own reason",
+                      "not editable" in str(r.get("error", ""))
+                      and "comment only" in str(r.get("error", "")),
+                      str(r.get("error"))[:110])
+                check("e. nothing was written",
+                      lock_target.read_text() == lock_before)
+        finally:
+            BASE, TOKEN, ORIGIN = main_base, main_token, main_origin
+            lk.terminate()
+            try:
+                lk.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                lk.kill()
+
+        # (g) the CLI verb resolves the anchor exactly as the browser does.
+        #     R3.7: two doors that disagree about where a proposal lands is worse
+        #     than one door.
+        cli_orphan = subprocess.run(
+            [sys.executable, str(ROOT / "server.py"), str(target), "--approve", cid_d],
+            capture_output=True, text=True)
+        check("g. server.py --approve reports the orphan too",
+              cli_orphan.returncode != 0
+              and "orphaned" in (cli_orphan.stdout + cli_orphan.stderr),
+              (cli_orphan.stdout + cli_orphan.stderr).strip().splitlines()[0][:90]
+              if (cli_orphan.stdout + cli_orphan.stderr).strip() else "no output")
+        check("g. and the CLI wrote nothing either", "NEVER LANDS" not in target.read_text())
+
+        # (f) whitespace and entity differences still match
+        ws_unit = next(u for u in call("/__units")
+                       if u["editable"] and len(u["raw"].strip()) > 80
+                       and u["id"] not in (solo["id"], orph["id"]))
+        cid_f = fresh_comment(ws_unit["id"])
+        import re as _re
+        mangled = _re.sub(r"\s+", "   \n  ", ws_unit["raw"].strip())
+        call("/__propose", {"id": cid_f, "unit": ws_unit["id"],
+                            "text": "MATCHED DESPITE WHITESPACE", "anchor": mangled})
+        r = call("/__approve", {"id": cid_f})
+        check("f. an anchor differing only in whitespace still matches",
+              r.get("ok"), json.dumps(r)[:110])
+
+        print("\n8. agent event stream")
         inbox = (TMP / ".review" / target.stem / "inbox.jsonl").read_text().strip().splitlines()
         kinds = [json.loads(l)["type"] for l in inbox]
         check("inbox is append-only JSONL for Monitor", len(inbox) >= 4, ",".join(kinds))

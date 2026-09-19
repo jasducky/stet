@@ -352,23 +352,81 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": "no such comment"}, 404)
 
         if p == "/__propose":
-            c["proposal"] = {"unit": data.get("unit") or c.get("unit"),
+            unit_id = data.get("unit") or c.get("unit")
+
+            # R3.2. Anchor to the WORDS this was written against, not to a
+            # region index, and capture them through the same normalisation
+            # approval will use. An explicit anchor from the caller wins, so an
+            # agent can propose against a phrase rather than a whole region.
+            anchor = data.get("anchor")
+            if not anchor:
+                doc = st.text()
+                u = next((x for x in st.units() if x.id == unit_id), None)
+                anchor = html_doc.anchor_text(u.raw(doc)) if u is not None else ""
+
+            c["proposal"] = {"unit": unit_id,
                              "text": data.get("text", ""),
-                             "note": data.get("note", "")}
+                             "note": data.get("note", ""),
+                             "anchor": anchor}
             c["status"] = "proposed"
 
         elif p == "/__approve":
             pr = c.get("proposal")
             if not pr:
                 return self._json({"ok": False, "error": "nothing proposed"}, 400)
+
+            # R3.3. Resolve the anchor to a REGION. Three outcomes, and two of
+            # them write nothing and discard nothing (R3.4).
+            doc = st.text()
+            units_now = st.units()
+            anchor = pr.get("anchor")
+
+            if not anchor:
+                # A proposal from before anchors existed. Say so rather than
+                # quietly trusting a region id that may have moved.
+                c["status"] = "orphaned"
+                st.save(comments)
+                return self._json({"ok": False, "status": "orphaned",
+                                   "error": "this proposal carries no anchor, so the "
+                                            "words it was written against cannot be found"},
+                                  409)
+
+            hits = html_doc.find_anchor(doc, units_now, anchor)
+
+            if len(hits) == 0:
+                c["status"] = "orphaned"
+                st.save(comments)
+                st.append_inbox({"type": "orphaned", "at": iso(), "id": c["id"],
+                                 "author": who, "anchor": anchor[:200]})
+                return self._json({"ok": False, "status": "orphaned",
+                                   "anchor": anchor,
+                                   "error": "the text this was written against is no "
+                                            "longer in the document"}, 409)
+
+            if len(hits) > 1:
+                c["status"] = "ambiguous"
+                st.save(comments)
+                st.append_inbox({"type": "ambiguous", "at": iso(), "id": c["id"],
+                                 "author": who, "anchor": anchor[:200],
+                                 "matches": [u.id for u in hits]})
+                return self._json({"ok": False, "status": "ambiguous",
+                                   "anchor": anchor,
+                                   "matches": [u.id for u in hits],
+                                   "error": f"this text appears in {len(hits)} regions, "
+                                            "so it is not clear which one to change"}, 409)
+
+            # Exactly one. Apply through the same write path as a human edit, so
+            # the locked check and payload validation both still fire.
+            landed = hits[0]
             try:
-                st.apply_edit(pr["unit"], pr["text"], "Claude (approved)")
+                st.apply_edit(landed.id, pr["text"], "Claude (approved)")
             except (KeyError, ValueError) as e:
-                return self._json({"ok": False, "error": str(e)}, 400)
+                return self._json({"ok": False, "status": "refused",
+                                   "error": str(e)}, 400)
             c["status"] = "applied"
             c["resolved"] = pr.get("note", "")
             st.append_inbox({"type": "approved", "at": iso(), "id": c["id"],
-                             "unit": pr["unit"]})
+                             "author": who, "unit": landed.id})
 
         elif p == "/__reject":
             c["status"] = "open"
@@ -462,8 +520,25 @@ def main():
         if not pr:
             print(f"{cid}: nothing proposed")
             sys.exit(1)
+        # R3.7: the CLI verb resolves the anchor exactly as the browser does,
+        # or the two doors disagree about where a proposal lands.
+        doc_now = store.text()
+        hits = html_doc.find_anchor(doc_now, store.units(), pr.get("anchor") or "")
+        if not pr.get("anchor"):
+            print(f"{cid}: this proposal carries no anchor, so the words it was "
+                  f"written against cannot be found")
+            sys.exit(1)
+        if len(hits) == 0:
+            print(f"{cid}: orphaned - the text this was written against is no longer "
+                  f"in the document")
+            print(f"  anchor: {pr['anchor'][:120]}")
+            sys.exit(1)
+        if len(hits) > 1:
+            print(f"{cid}: ambiguous - this text appears in {len(hits)} regions "
+                  f"({', '.join(u.id for u in hits)})")
+            sys.exit(1)
         try:
-            store.apply_edit(pr["unit"], pr["text"], "Claude (approved)")
+            store.apply_edit(hits[0].id, pr["text"], "Claude (approved)")
         except (KeyError, ValueError) as e:
             print(f"{cid}: {e}")
             sys.exit(1)
