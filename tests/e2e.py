@@ -4,10 +4,12 @@ whole loop over HTTP - edit, comment, propose, approve - then verify the file
 on disk actually changed and that nothing outside the edited span moved.
 """
 import json
+import re
 import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -22,18 +24,60 @@ PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}"
 
 
-def call(path, body=None):
+TOKEN = None          # read out of the served page, the way the real page gets it
+ORIGIN = None
+
+
+def _read_token(page_html):
+    """Pull the session token out of the injected window.__RV__ payload.
+
+    This is deliberately how the suite obtains it: the token is not on disk and
+    not in an environment variable, so the only way to hold one is to have been
+    served the page. A suite that could get it any other way would not be
+    testing R2.5.
+    """
+    m = re.search(r"window\.__RV__=(\{.*?\});</script>", page_html, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1)).get("token")
+    except json.JSONDecodeError:
+        return None
+
+
+def raw_call(path, body=None, headers=None, method=None):
+    """A request with exactly the headers given. Returns (status, parsed body).
+
+    Never adds the token or an Origin of its own, so it can be used to assert a
+    refusal. urllib raises on 4xx, which is caught here so the status is data.
+    """
     req = urllib.request.Request(
         BASE + path,
         data=json.dumps(body).encode() if body is not None else None,
-        headers={"Content-Type": "application/json"},
-        method="POST" if body is not None else "GET")
-    with urllib.request.urlopen(req, timeout=5) as r:
-        raw = r.read().decode()
+        headers=headers or {},
+        method=method or ("POST" if body is not None else "GET"))
     try:
-        return json.loads(raw)
+        with urllib.request.urlopen(req, timeout=5) as r:
+            raw, status = r.read().decode(), r.status
+    except urllib.error.HTTPError as e:
+        raw, status = e.read().decode(), e.code
+    try:
+        return status, json.loads(raw)
     except json.JSONDecodeError:
-        return raw
+        return status, raw
+
+
+def call(path, body=None):
+    """A request as the served page makes it: same Origin, session token."""
+    headers = {"Content-Type": "application/json"}
+    if body is not None:
+        if ORIGIN:
+            headers["Origin"] = ORIGIN
+            headers["Sec-Fetch-Site"] = "same-origin"
+        if TOKEN:
+            headers["X-RV-Token"] = TOKEN
+    status, parsed = raw_call(path, body, headers)
+    return parsed
 
 
 def main():
@@ -72,6 +116,12 @@ def main():
         print("\n1. serve + inject")
         page = call("/")
         check("review layer injected", "/__lib/review.js" in page)
+
+        global TOKEN, ORIGIN
+        TOKEN = _read_token(page)
+        ORIGIN = f"http://127.0.0.1:{PORT}"
+        check("session token minted and injected into the page",
+              bool(TOKEN) and len(TOKEN) >= 32, f"{len(TOKEN or '')} chars")
         check("artefact file NOT modified by serving", target.read_text() == original)
         check("data-rv-id stamped in the served copy", 'data-rv-id="u0' in page)
         check("stamped ids absent from the file on disk", "data-rv-id" not in target.read_text())
@@ -123,7 +173,63 @@ def main():
         check("rejection recorded as a reply", any("wrong tone" in r["text"] for r in state[c2["id"]]["replies"]))
         check("proposal cleared on rejection", "proposal" not in state[c2["id"]])
 
-        print("\n5. agent event stream")
+        print("\n5. the write endpoints refuse anything but the served page (R2.5)")
+        BROWSER_ONLY = ["/__edit", "/__comment", "/__reply", "/__approve",
+                        "/__reject", "/__resolve", "/__delete"]
+        before_doc = target.read_text()
+        sidecar = TMP / ".review" / target.stem
+        before_side = sorted((f.name, f.read_text()) for f in sidecar.iterdir())
+
+        bare = []
+        for ep in BROWSER_ONLY:
+            st_code, _ = raw_call(ep, {"id": "c01", "text": "HIJACKED",
+                                       "comment": "x", "reason": "x"},
+                                  {"Content-Type": "application/json"})
+            bare.append((ep, st_code))
+        check("all seven browser-only endpoints refuse a tokenless, Origin-less POST",
+              all(c == 403 for _, c in bare),
+              ", ".join(f"{e}={c}" for e, c in bare))
+
+        st_code, _ = raw_call("/__edit", {"id": target_unit["id"], "text": "HIJACKED"},
+                              {"Content-Type": "application/json",
+                               "Origin": "http://evil.example",
+                               "Sec-Fetch-Site": "cross-site",
+                               "X-RV-Token": TOKEN})
+        check("a foreign Origin with a VALID token is refused", st_code == 403, str(st_code))
+
+        st_code, _ = raw_call("/__edit", {"id": target_unit["id"], "text": "HIJACKED"},
+                              {"Content-Type": "application/json",
+                               "Origin": ORIGIN,
+                               "Sec-Fetch-Site": "same-origin",
+                               "X-RV-Token": "not-the-real-token"})
+        check("the served Origin with a WRONG token is refused", st_code == 403, str(st_code))
+
+        check("document unchanged by every refused request",
+              target.read_text() == before_doc)
+        check("sidecar unchanged by every refused request",
+              sorted((f.name, f.read_text()) for f in sidecar.iterdir()) == before_side)
+
+        r = call("/__comment", {"unit": units[10]["id"], "quote": "",
+                                "comment": "from the served page"})
+        check("the same endpoint succeeds from the served page", r.get("ok"), json.dumps(r))
+
+        # the exemption, asserted rather than left to be discovered
+        st_code, body = raw_call("/__propose",
+                                 {"id": r["id"], "unit": units[10]["id"],
+                                  "text": "AGENT PROPOSAL", "note": "no browser here"},
+                                 {"Content-Type": "application/json"})
+        check("/__propose accepts a tokenless, Origin-less POST", st_code == 200 and body.get("ok"),
+              f"{st_code} {body}")
+        state = {x["id"]: x for x in call("/__comments")}
+        check("the agent's proposal was stored",
+              state[r["id"]].get("proposal", {}).get("text") == "AGENT PROPOSAL")
+        check("and it did NOT reach the document",
+              "AGENT PROPOSAL" not in target.read_text())
+
+        blob = "".join(f.read_text() for f in sidecar.iterdir())
+        check("the token is written nowhere under .review/", TOKEN not in blob)
+
+        print("\n6. agent event stream")
         inbox = (TMP / ".review" / target.stem / "inbox.jsonl").read_text().strip().splitlines()
         kinds = [json.loads(l)["type"] for l in inbox]
         check("inbox is append-only JSONL for Monitor", len(inbox) >= 4, ",".join(kinds))

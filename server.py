@@ -20,6 +20,7 @@ no removal step - close the server and the file is exactly as Claude wrote it.
 import json
 import os
 import re
+import secrets
 import sys
 import threading
 import time
@@ -33,6 +34,29 @@ from adapters import html_doc  # noqa: E402
 HERE = Path(__file__).resolve().parent
 INITIAL_PPID = os.getppid()
 _last_hit = time.time()
+
+# R2.5. Minted once per server process, injected into the served page, and never
+# written to disk - nothing under .review/ may contain it, because that directory
+# is what an agent reads.
+SESSION_TOKEN = secrets.token_urlsafe(32)
+
+# Two endpoint classes, written down so a later reader can tell which are guarded
+# on purpose and which exemption is deliberate.
+#
+# Browser-only: everything that writes to the document or the sidecar on a human's
+# behalf. Guarded by an Origin / Sec-Fetch-Site check AND the session token, both
+# checked before the request body is read at all.
+BROWSER_ONLY = frozenset({
+    "/__edit", "/__comment", "/__reply", "/__approve",
+    "/__reject", "/__resolve", "/__delete",
+})
+
+# Agent-reachable: /__propose only. The agent posts from a shell with no browser,
+# no Origin and no token, and the agent credential is deliberately deferred. A
+# proposal writes nothing to the document - it needs a human approval through a
+# browser-only endpoint to reach the file - so the exemption costs nothing.
+# The `author` field stays a log label, never a credential.
+AGENT_REACHABLE = frozenset({"/__propose"})
 
 
 def now():
@@ -193,16 +217,64 @@ class Handler(BaseHTTPRequestHandler):
             units = st.units()
             locked = {u.id for u in units if not u.editable}
             return self._send(200, inject(text, units, locked, {
-                "author": self.author, "name": st.target.name}))
+                "author": self.author, "name": st.target.name,
+                "token": SESSION_TOKEN}))
 
         return self._send(404, "not found")
+
+    # ---------- request guard (R2.5) ----------
+    def _same_origin(self):
+        """True when the request demonstrably came from the served page.
+
+        Sec-Fetch-Site is the modern signal and browsers send it unforgeably.
+        Origin is checked as well for anything that does not, and a cross-site
+        value is rejected outright rather than falling through to the token.
+        """
+        site = self.headers.get("Sec-Fetch-Site")
+        if site is not None and site not in ("same-origin", "none"):
+            return False
+
+        origin = self.headers.get("Origin")
+        if origin is None:
+            # No Origin at all is only acceptable when the browser told us the
+            # request is same-origin. A bare POST from another process has
+            # neither, and is refused.
+            return site == "same-origin"
+
+        host = self.headers.get("Host", "")
+        allowed = {f"http://{host}"}
+        if ":" in host:
+            _, _, port = host.rpartition(":")
+            allowed |= {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
+        return origin in allowed
+
+    def _guard(self, path):
+        """Refuse a browser-only endpoint unless the request came from the served
+        page AND carries this process's token. Returns True when refused.
+
+        Runs before the body is read, so a rejected request is never parsed.
+        """
+        if path not in BROWSER_ONLY:
+            return False
+
+        token = self.headers.get("X-RV-Token", "")
+        if not self._same_origin() or not secrets.compare_digest(token, SESSION_TOKEN):
+            self._json({"ok": False, "error": "refused: not from the served page"}, 403)
+            return True
+        return False
 
     # ---------- POST ----------
     def do_POST(self):
         st = self.store
+        p = self.path
+
+        # Guarded before any parsing. Nothing below this line runs for a refused
+        # request - not the body read, not the JSON decode, not a store load.
+        if self._guard(p):
+            return
+
         length = int(self.headers.get("Content-Length", 0))
         data = json.loads(self.rfile.read(length)) if length else {}
-        p = self.path
         who = data.get("author") or self.author
 
         if p == "/__edit":
@@ -272,6 +344,9 @@ class Handler(BaseHTTPRequestHandler):
 
         elif p == "/__delete":
             c["deleted"] = True
+
+        elif p in AGENT_REACHABLE:
+            pass  # /__propose is handled above; listed for the reader
 
         else:
             return self._json({"ok": False, "error": "unknown endpoint"}, 404)
