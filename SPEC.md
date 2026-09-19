@@ -103,6 +103,21 @@ the tool.
 `i`, `code`, `small`, `sub`, `sup`, `br`. Anything else is non-inline. This is stated because two
 implementers reading "inline" produced different region sets.
 
+**I5's detection rule**, stated because a fixture cannot be authored against an undocumented one.
+A region is locked when an ancestor element's `id` appears in the locked set. That set is built by
+scanning each `<script>` in the document for a DOM-write pattern, then collecting the quoted string
+literals in that script which match an `id` present in the document.
+
+The rule is **static**: it reads the source text and never executes the script, so R1.5's policy
+against document script does not affect it.
+
+It is also **heuristic, and its limits are part of the contract**. A script that builds an id by
+concatenation, reads it from data, or writes through a node reference it never names as a string
+will not be caught, and the region will be offered as editable. An edit there is persisted to the
+file and then overwritten by the script on the next load. This is a known false-negative class, not
+a defect to be fixed by guessing harder; widening the rule to catch it would lock regions that are
+genuinely editable, which is the worse failure.
+
 ### I6 — the approval gate, stated honestly
 
 **Decided 19 September 2026: the gate is a cooperative protocol, not an enforcement boundary.**
@@ -322,6 +337,8 @@ keeps that assumption honest; it is not new scope.
 | A13 | The served document's own script calls `/__edit` | The page loads | The script does not execute. File unchanged | automated-browser |
 | A14 | An edit payload containing a `script` tag | The human saves | Refused with a reason. File unchanged | automated |
 | A15 | A locked region | The page loads | It is visibly distinguishable before any interaction | manual |
+| A16 | The human is typing into a region, unsaved | An external modification is detected and the write refused | The typed content survives the re-read and can be retried | automated-browser |
+| A17 | A served document referencing its own sibling script file | The page loads | That script does not execute. File unchanged | automated-browser |
 
 **Verification values:** `automated` (server or adapter, runnable in `probe.py` or `e2e.py`),
 `automated-browser` (needs a headless browser driving `lib/review.js`), `manual`.
