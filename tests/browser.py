@@ -22,6 +22,7 @@ A missing driver is a loud failure, never a skip. A harness that silently passes
 when it cannot drive anything is the same defect as a probe that reports success
 having tested nothing.
 """
+import atexit
 import shutil
 import socket
 import subprocess
@@ -140,6 +141,12 @@ class Harness:
         else:
             raise RuntimeError(f"server never came up on {self.base}")
 
+        # Safety net. close() in a finally covers the ordinary path, but a test
+        # that dies between Popen and close - a timeout raising inside a helper,
+        # say - would otherwise leave a server listening and a temp directory
+        # behind. Found by leaking one during a mutation run.
+        atexit.register(self.close)
+
         self._pw = _driver_acquire()
         self._holds_driver = True
         self._browser = self._pw.chromium.launch(headless=self.headless)
@@ -172,6 +179,12 @@ class Harness:
 
         if self._tmp and self._tmp.exists():
             shutil.rmtree(self._tmp, ignore_errors=True)
+        self._tmp = None
+
+        try:
+            atexit.unregister(self.close)
+        except Exception:
+            pass
 
     def __enter__(self):
         return self.start()
