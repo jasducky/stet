@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Weighbridge exceptions — period report</title>
+<style>
+  body { margin: 0; font-family: "Helvetica Neue", Arial, sans-serif; color: #1b241f; }
+  .page { max-width: 860px; margin: 48px auto; padding: 0 24px; }
+  h1 { font-size: 30px; margin-bottom: 4px; }
+  h2 { font-size: 19px; margin-top: 40px; }
+  .sub { color: #66746c; font-size: 14px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 18px; font-size: 14px; }
+  th { text-align: left; border-bottom: 2px solid #1b241f; padding: 8px 10px; }
+  td { border-bottom: 1px solid #e3e7e3; padding: 8px 10px; vertical-align: top; }
+  caption { text-align: left; font-size: 13px; color: #66746c; padding-bottom: 8px; }
+  li { margin-bottom: 8px; line-height: 1.55; }
+  .footnote { font-size: 12px; color: #66746c; margin-top: 40px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Weighbridge exceptions</h1>
+  <p class="sub">Northwick Analytics · invented period report · fictional throughout</p>
+
+  <p>Every row below is made up. The table exists so region discovery can be exercised against
+  tabular content, where each cell is a small non-inline element holding text.</p>
+
+  <h2>Exceptions by depot</h2>
+
+  <table>
+    <caption>Fourteen weeks, invented figures, ordered by count.</caption>
+    <thead>
+      <tr>
+        <th>Depot</th>
+        <th>Exceptions</th>
+        <th>Most common cause</th>
+        <th>Resolved same shift</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Netherby</td>
+        <td>148</td>
+        <td>Manifest weight disagrees with the slip</td>
+        <td>31%</td>
+      </tr>
+      <tr>
+        <td>Carrowmoor</td>
+        <td>121</td>
+        <td>Customer approval not received before departure</td>
+        <td>44%</td>
+      </tr>
+      <tr>
+        <td>Ferrisgate</td>
+        <td>96</td>
+        <td>Seal number transposed on entry</td>
+        <td>62%</td>
+      </tr>
+      <tr>
+        <td>Kellsgate</td>
+        <td>74</td>
+        <td>No supervisor on shift to sign off</td>
+        <td>28%</td>
+      </tr>
+      <tr>
+        <td>Marchwood</td>
+        <td>69</td>
+        <td>Calibration certificate lapsed</td>
+        <td>81%</td>
+      </tr>
+      <tr>
+        <td>Brantham</td>
+        <td>38</td>
+        <td>Manifest weight disagrees with the slip</td>
+        <td>73%</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>What the table does not say</h2>
+
+  <ul>
+    <li>An exception is not a fault. Most are closed inside twenty minutes and cost nothing.</li>
+    <li>The resolved-same-shift column is the one worth reading, and it is not the one anybody asks
+    about in the monthly pack.</li>
+    <li>Netherby's count is high partly because Netherby records exceptions its neighbours handle
+    informally and never log.</li>
+    <li>No depot in this table is real.</li>
+  </ul>
+
+  <h2>Recommendation</h2>
+
+  <ol>
+    <li>Stop reporting the raw count. It rewards under-logging.</li>
+    <li>Report the share resolved before the driver leaves, per depot, per shift.</li>
+    <li>Give the threshold for a customer approval to the customer, not the planner.</li>
+  </ol>
+
+  <p class="footnote">Committed as a test fixture. Northwick Analytics, every depot, every figure and
+  every recommendation above are invented, and none of it describes any real operation.</p>
+
+</div>
+</body>
+</html>

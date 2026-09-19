@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Northwick Yard — depot board mock</title>
+<style>
+  :root { --ink:#16221c; --muted:#61706a; --line:#e2e7e1; --sand:#f6f4ef; }
+  body { margin:0; font-family:"Helvetica Neue",Arial,sans-serif; color:var(--ink); background:#fff; }
+  .wrap { max-width:1080px; margin:0 auto; padding:48px 24px; }
+  .masthead { border-bottom:2px solid var(--ink); padding-bottom:20px; }
+  .eyebrow { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }
+  .display { font-size:40px; font-weight:700; line-height:1.1; margin-top:8px; }
+  .standfirst { font-size:17px; color:var(--muted); margin-top:10px; max-width:640px; }
+  .band { margin-top:48px; }
+  .band-title { font-size:20px; font-weight:700; }
+  .band-note { font-size:14px; color:var(--muted); margin-top:4px; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:20px; margin-top:24px; }
+  .tile { border:1px solid var(--line); border-radius:4px; padding:20px; }
+  .tile-name { font-size:15px; font-weight:700; }
+  .tile-figure { font-size:30px; margin:10px 0 6px; }
+  .tile-state { font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); }
+  .tile-note { font-size:13px; color:var(--muted); margin-top:10px; line-height:1.5; }
+  .strip { background:var(--sand); padding:24px; border-radius:4px; margin-top:24px; }
+  .strip-row { padding:12px 0; border-bottom:1px solid var(--line); }
+  .strip-label { font-size:13px; font-weight:700; }
+  .strip-body { font-size:13px; color:var(--muted); margin-top:4px; }
+  .colophon { margin-top:56px; padding-top:20px; border-top:1px solid var(--line);
+              font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="eyebrow">Northwick Yard · internal mock</div>
+    <div class="display">Depot board</div>
+    <div class="standfirst">Every figure on this page is invented. It exists to exercise a parser
+    against a document that uses no semantic text elements at all.</div>
+  </div>
+
+
+  <div class="band">
+    <div class="band-title">Median handover by depot</div>
+    <div class="band-note">Twelve yards, current period, fictional data.</div>
+    <div class="grid">
+      <div class="tile">
+        <div class="tile-name">Eastfield</div>
+        <div class="tile-figure">41m</div>
+        <div class="tile-state">steady</div>
+        <div class="tile-note">Two bays down for resurfacing until the end of the month.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Lowry Dock</div>
+        <div class="tile-figure">36m</div>
+        <div class="tile-state">steady</div>
+        <div class="tile-note">Best weighbridge turnaround in the group, and nobody knows why.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Carrowmoor</div>
+        <div class="tile-figure">92m</div>
+        <div class="tile-state">watch</div>
+        <div class="tile-note">Paperwork mismatches account for most of the gap here.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Brantham</div>
+        <div class="tile-figure">54m</div>
+        <div class="tile-state">steady</div>
+        <div class="tile-note">Seasonal peak passed without the usual Friday backlog.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Kellsgate</div>
+        <div class="tile-figure">77m</div>
+        <div class="tile-state">watch</div>
+        <div class="tile-note">One supervisor covers both shifts on Tuesdays.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Ardwick Row</div>
+        <div class="tile-figure">48m</div>
+        <div class="tile-state">steady</div>
+        <div class="tile-note">Moved to the handheld sign-off in March.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Netherby</div>
+        <div class="tile-figure">112m</div>
+        <div class="tile-state">flag</div>
+        <div class="tile-note">Third month above the threshold; escalated to planning.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Thornleigh</div>
+        <div class="tile-figure">39m</div>
+        <div class="tile-state">steady</div>
+        <div class="tile-note">Smallest yard in the sample and the least affected.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Marchwood</div>
+        <div class="tile-figure">63m</div>
+        <div class="tile-state">watch</div>
+        <div class="tile-note">Weighbridge calibration overdue since the audit.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Dunsley Bank</div>
+        <div class="tile-figure">58m</div>
+        <div class="tile-state">steady</div>
+        <div class="tile-note">Two drivers trained as relief supervisors in April.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Ferrisgate</div>
+        <div class="tile-figure">85m</div>
+        <div class="tile-state">watch</div>
+        <div class="tile-note">Customer approvals routinely arrive after the driver leaves.</div>
+      </div>
+      <div class="tile">
+        <div class="tile-name">Oakhampton</div>
+        <div class="tile-figure">44m</div>
+        <div class="tile-state">steady</div>
+        <div class="tile-note">Nothing open for eleven consecutive shifts.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="band">
+    <div class="band-title">By shift</div>
+    <div class="band-note">The late shift is where the long tail begins.</div>
+    <div class="strip">
+      <div class="strip-row">
+        <div class="strip-label">Early · 04:00 - 12:00</div>
+        <div class="strip-body">Handovers cluster in the first ninety minutes.</div>
+      </div>
+      <div class="strip-row">
+        <div class="strip-label">Late · 12:00 - 20:00</div>
+        <div class="strip-body">Where almost every long-running handover starts.</div>
+      </div>
+      <div class="strip-row">
+        <div class="strip-label">Night · 20:00 - 04:00</div>
+        <div class="strip-body">Low volume, and the only shift with no open items.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="colophon">
+    <div>Northwick Yard and every depot named above are fictional.</div>
+    <div>Committed as a test fixture for region discovery on div-only documents.</div>
+  </div>
+
+</div>
+</body>
+</html>

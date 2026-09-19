@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Northwick Yard — landing page mock</title>
+<style>
+  :root { --ink: #16221c; --muted: #5d6b62; --sand: #f6f3ec; }
+  body { margin: 0; font-family: "Helvetica Neue", Arial, sans-serif; color: var(--ink); }
+  .hero { background: var(--sand); padding: 88px 24px; text-align: center; }
+  h1 { font-size: 44px; margin: 0 0 16px; }
+  h2 { font-size: 26px; margin: 0 0 12px; }
+  h3 { font-size: 17px; margin: 0 0 6px; }
+  .lede { font-size: 19px; color: var(--muted); max-width: 620px; margin: 0 auto; }
+  section { max-width: 940px; margin: 0 auto; padding: 64px 24px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 32px; }
+  .card { border: 1px solid #e3e6e1; padding: 24px; border-radius: 4px; }
+  .cta { background: var(--ink); color: #fff; padding: 64px 24px; text-align: center; }
+  footer { padding: 32px 24px; color: var(--muted); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>Your depot average is lying to you</h1>
+  <p class="lede">Northwick Yard reads the three timestamps your handhelds already collect and shows
+  you the handovers that actually cost you a shift.</p>
+  <div><a href="#">Book a walkthrough</a></div>
+</div>
+
+<section>
+  <h2>What it does</h2>
+  <p>No new hardware, no new fields for drivers to fill in, and nothing that asks a yard supervisor
+  to change how they work. It reads what is already there.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Reads the gaps</h3>
+      <p>Seal scan to weighbridge slip to sign-off. The waiting between them is the measurement.</p>
+    </div>
+    <div class="card">
+      <h3>Names the outliers</h3>
+      <p>The four handovers a week that run past three hours, with the depot and shift attached.</p>
+    </div>
+    <div class="card">
+      <h3>Leaves the average alone</h3>
+      <p>You still get it. It is simply never the headline number on any screen we build.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>How a week looks</h2>
+  <p>A supervisor opens one page at the start of a shift. It lists the handovers still open from
+  yesterday, and nothing else.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Monday</h3>
+      <p>Two trailers at Carrowmoor waiting on a weighbridge slip that was never scanned.</p>
+    </div>
+    <div class="card">
+      <h3>Wednesday</h3>
+      <p>A seal discrepancy called in eleven minutes after the driver had already left the yard.</p>
+    </div>
+    <div class="card">
+      <h3>Friday</h3>
+      <p>Nothing open. The page says so in one line and the supervisor closes it again.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>What it will not do</h2>
+  <p>It does not score drivers, it does not produce a league table of depots, and it does not send
+  anybody an email at six in the morning. Every one of those was asked for and turned down.</p>
+</section>
+
+<div class="cta">
+  <h2>See it against one depot's data</h2>
+  <p>A fortnight of real handovers, read in an afternoon, with no integration work.</p>
+  <div><a href="#">Start there</a></div>
+</div>
+
+<footer>
+  <div>Northwick Yard is a fictional product. This page exists only as a parser fixture.</div>
+  <div>No real company, person or figure appears on it.</div>
+</footer>
+
+</body>
+</html>

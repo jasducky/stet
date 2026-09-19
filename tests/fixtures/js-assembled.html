@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Yard throughput — how the model works</title>
+<style>
+  body { margin: 0; font-family: Iowan Old Style, Georgia, serif; background: #fbfaf7; color: #22281f; }
+  main { max-width: 680px; margin: 56px auto; padding: 0 24px; }
+  h1 { font-size: 34px; margin-bottom: 8px; }
+  h2 { font-size: 20px; margin-top: 40px; }
+  p { line-height: 1.6; }
+  .panel { background: #eef0e9; padding: 20px 24px; border-radius: 3px; margin-top: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Yard throughput, and why the depot average hides it</h1>
+
+  <p>A depot that averages ninety minutes a handover is not a depot where handovers take
+  ninety minutes. It is usually a depot where most take forty and a handful take six hours,
+  and the six-hour ones are the entire problem. The average is the one number that cannot
+  show you that.</p>
+
+  <h2>What the model actually reads</h2>
+
+  <p>Three fields, all of which already exist on the handheld: the seal scan, the weighbridge
+  slip, and the supervisor sign-off. Nothing new is collected. The model only cares about the
+  gaps between them, because a gap is where a trailer sits still while somebody looks for a
+  piece of paper.</p>
+
+  <div class="panel" id="live-summary">
+    <div>Loading the current period…</div>
+  </div>
+
+  <div class="panel" id="live-breakdown">
+    <div>Loading the per-depot breakdown…</div>
+  </div>
+</main>
+
+<script>
+  // Both panels are assembled at runtime, so their text is not in this file.
+  var summary = document.getElementById("live-summary");
+  summary.innerHTML = "<div>Median handover this period: 38 minutes.</div>";
+
+  var breakdown = document.getElementById("live-breakdown");
+  breakdown.innerHTML = "<div>Eastfield 41m · Lowry Dock 36m · Carrowmoor 92m</div>";
+</script>
+</body>
+</html>

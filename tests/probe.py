@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Run the adapter over real Claude artefacts and check the invariants.
+"""Run the adapter over the committed fixture corpus and check the invariants.
 
-Three things must hold or the whole design is wrong:
-  1. unit count is sane - not 0 (missed everything), not 200+ (shattered prose)
-  2. units never overlap - an edit can never clobber a neighbouring edit
-  3. a round-trip edit changes ONLY the edited span, byte for byte
+Four things must hold or the whole design is wrong:
+  1. region count stays within the bounds recorded for each fixture - not 0 (missed
+     everything), not far above (shattered prose). This is I3's real assertion.
+  2. regions never overlap - an edit can never clobber a neighbouring edit (I4)
+  3. a round-trip edit changes ONLY the edited span, byte for byte (I2)
+  4. script-built regions are locked (I5)
+
+Fixtures are committed under tests/fixtures/ and resolved relative to this file, so
+this suite tells the truth on a clean clone with no sibling vault. A fixture that
+cannot be resolved is a FAILURE, never a skip: a suite that reports success having
+tested nothing is worse than no suite.
 """
 import sys
 from pathlib import Path
@@ -12,34 +19,57 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from adapters import html_doc  # noqa: E402
 
-VAULT = Path.home() / "Claude"
-TARGETS = [
-    VAULT / "samples/page-v8-overview.html",
-    VAULT / "samples/card.html",
-    VAULT / "samples/page-mock-v4.html",
-    VAULT / "10-System/Images_generated/agent-design-page-mockup-v2.html",
-    VAULT / "10-System/Images_generated/5q-landing-page-mockup.html",
-    VAULT / "10-System/Images_generated/agent-harness-explained.html",
-    VAULT / "10-System/Images_generated/10habits-spot-checklist.html",
-    VAULT / "samples/page-mock-v6.html",
-]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+# name -> (min regions, max regions, minimum locked regions)
+#
+# Bounds bracket the count measured when the fixture was authored, with a small
+# margin so an innocuous copy edit does not fail the suite while a change in
+# region discovery still does. Tighten a bound rather than widen it.
+TARGETS = {
+    "div-only-card.html":   (5, 8, 0),
+    "checklist-card.html":  (5, 8, 0),
+    "js-assembled.html":    (5, 8, 2),
+    "landing-page.html":    (22, 31, 0),
+    "prose-article.html":   (36, 48, 0),
+    "table-report.html":    (38, 50, 0),
+    "div-grid-mock.html":   (55, 72, 0),
+    "deep-sections.html":   (90, 115, 0),
+}
 
 fails = []
-print(f"{'file':44} {'units':>6} {'lock':>5} {'tags (top 4)':32} {'overlap':>8} {'round-trip':>11}")
-print("-" * 112)
+parsed = 0
 
-for path in TARGETS:
+print(f"{'fixture':24} {'regions':>8} {'bounds':>11} {'lock':>5} "
+      f"{'tags (top 4)':30} {'overlap':>8} {'round-trip':>11}")
+print("-" * 104)
+
+for name, (lo, hi, min_locked) in TARGETS.items():
+    path = FIXTURES / name
+
+    # 0. a fixture that is not there is a failure, not a skip
     if not path.exists():
-        print(f"{path.name[:42]:44} MISSING")
+        print(f"{name[:22]:24} MISSING")
+        fails.append(f"{name}: fixture missing from {FIXTURES}")
         continue
+
     text = path.read_text(errors="replace")
     units = html_doc.parse(text)
+    parsed += 1
+
+    # 1. region count within the recorded bounds
+    if not units:
+        fails.append(f"{name}: found NO regions")
+    elif not (lo <= len(units) <= hi):
+        fails.append(f"{name}: {len(units)} regions, outside the recorded bounds {lo}-{hi}")
 
     # 2. no overlap
     spans = sorted((u.inner for u in units))
     overlap = sum(1 for a, b in zip(spans, spans[1:]) if a[1] > b[0])
+    if overlap:
+        fails.append(f"{name}: {overlap} overlapping regions")
 
-    # 3. round-trip on the first editable unit with real text
+    # 3. round-trip on the first editable region with real text
     rt = "n/a"
     target = next((u for u in units if u.editable and len(u.raw(text).strip()) > 12), None)
     if target:
@@ -51,25 +81,35 @@ for path in TARGETS:
               and new[s + len(marker):] == text[e:])
         rt = "OK" if ok else "BROKEN"
         if not ok:
-            fails.append(f"{path.name}: round-trip corrupted bytes outside the span")
+            fails.append(f"{name}: round-trip corrupted bytes outside the span")
+    else:
+        fails.append(f"{name}: no editable region with enough text to round-trip")
+
+    # 4. script-built regions are locked
+    locked = sum(1 for u in units if not u.editable)
+    if locked < min_locked:
+        fails.append(f"{name}: {locked} locked regions, expected at least {min_locked}")
 
     tags = {}
     for u in units:
         tags[u.tag] = tags.get(u.tag, 0) + 1
     top = ", ".join(f"{k}:{v}" for k, v in sorted(tags.items(), key=lambda x: -x[1])[:4])
-    locked = sum(1 for u in units if not u.editable)
 
-    if not units:
-        fails.append(f"{path.name}: found NO units")
-    if overlap:
-        fails.append(f"{path.name}: {overlap} overlapping units")
-
-    print(f"{path.name[:42]:44} {len(units):6} {locked:5} {top[:32]:32} {overlap:8} {rt:>11}")
+    print(f"{name[:22]:24} {len(units):8} {f'{lo}-{hi}':>11} {locked:5} "
+          f"{top[:30]:30} {overlap:8} {rt:>11}")
 
 print()
+
+# An empty or unresolvable corpus must fail here rather than print a verdict.
+if parsed != len(TARGETS):
+    fails.append(f"only {parsed} of {len(TARGETS)} fixtures parsed")
+if not TARGETS:
+    fails.append("TARGETS is empty - the suite would report success having tested nothing")
+
 if fails:
     print("FAILURES:")
     for f in fails:
         print("  -", f)
     sys.exit(1)
-print("All invariants held.")
+
+print(f"All invariants held across {parsed} fixtures.")

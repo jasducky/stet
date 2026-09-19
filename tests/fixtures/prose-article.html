@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The six-hour handover — Northwick Analytics</title>
+<style>
+  body { margin: 0; font-family: Iowan Old Style, Georgia, serif; color: #1f2622; background: #fdfcfa; }
+  article { max-width: 700px; margin: 64px auto; padding: 0 24px; }
+  h1 { font-size: 38px; line-height: 1.15; }
+  h2 { font-size: 24px; margin-top: 48px; }
+  h3 { font-size: 18px; margin-top: 32px; }
+  p { line-height: 1.65; }
+  blockquote { margin: 28px 0; padding-left: 20px; border-left: 3px solid #c9cfc6; color: #4c554e; }
+  li { line-height: 1.6; margin-bottom: 8px; }
+  .meta { color: #78827a; font-size: 14px; }
+  .note { background: #f1f3ee; padding: 20px 24px; margin-top: 40px; font-size: 14px; }
+</style>
+</head>
+<body>
+<article>
+
+  <h1>The six-hour handover, and the average that hides it</h1>
+  <p class="meta">Northwick Analytics · fictional case note · invented throughout</p>
+
+  <p>Every depot we have looked at reports a handover average, and every one of those averages is
+  technically correct and practically useless. A depot averaging ninety minutes is almost never a
+  depot where handovers take ninety minutes.</p>
+
+  <p>It is a depot where most take forty, and four a week take six hours. Those four are the entire
+  operational problem, and the average is the one number that structurally cannot show them to you.</p>
+
+  <h2>Where the time actually goes</h2>
+
+  <p>A handover has three timestamps that already exist on the handheld: the seal scan when the
+  driver arrives, the weighbridge slip, and the supervisor sign-off that releases the trailer.</p>
+
+  <p>Nobody set out to build a measurement system. Those three exist for completely different
+  reasons, and the gaps between them were never meant to be read as anything.</p>
+
+  <p>But the gaps are where the trailer sits still. That is the whole insight, and it is not
+  sophisticated.</p>
+
+  <h3>The first gap</h3>
+
+  <p>Seal scan to weighbridge. This one is usually short and usually honest. A trailer arrives, it
+  gets weighed, the slip prints.</p>
+
+  <p>When it is long, the cause is almost always physical: the weighbridge is occupied, or it is out
+  of calibration and somebody has driven to the next yard.</p>
+
+  <h3>The second gap</h3>
+
+  <p>Weighbridge to sign-off. This is where the six hours live.</p>
+
+  <p>The trailer is weighed, the paperwork does not match, and the discrepancy goes into a process
+  that nobody has ever drawn on a wall. A supervisor rings a planner. The planner rings the customer.
+  The customer is at lunch.</p>
+
+  <p>Meanwhile the trailer occupies a bay, the driver runs down their hours, and none of that appears
+  anywhere as a cost attributable to a paperwork mismatch.</p>
+
+  <blockquote>
+    <p>The yard does not have a waiting problem. It has a decision-making problem that expresses
+    itself as waiting.</p>
+  </blockquote>
+
+  <h2>Why the average survives anyway</h2>
+
+  <p>Three reasons, all of them reasonable from inside the business.</p>
+
+  <ul>
+    <li>It is the number that was asked for, years ago, by somebody who has since left.</li>
+    <li>It is comparable across depots, and comparability feels like rigour.</li>
+    <li>It moves slowly, which makes it a comfortable thing to put in a monthly pack.</li>
+    <li>Nobody has ever been asked to defend it, because nobody has ever disputed it.</li>
+  </ul>
+
+  <p>None of those are stupid. They are what happens when a measure outlives the question it was
+  built to answer.</p>
+
+  <h3>What replacing it costs</h3>
+
+  <p>Less than people expect, because the replacement is not a new metric. It is a list.</p>
+
+  <p>The list has one row per handover that is still open, with the depot, the shift, and how long it
+  has been sitting. It is not an average of anything.</p>
+
+  <ul>
+    <li>No new fields for drivers.</li>
+    <li>No new hardware in the yard.</li>
+    <li>No change to how a supervisor works, beyond opening one page at the start of a shift.</li>
+  </ul>
+
+  <h2>What we got wrong first</h2>
+
+  <p>The first version of this ranked depots against each other. It was accurate, it was well
+  received in the room, and it was quietly ignored for six weeks.</p>
+
+  <p>The reason was obvious in hindsight. A league table tells a supervisor something about their
+  depot's standing and nothing at all about what to do before lunch.</p>
+
+  <p>The second version dropped ranking entirely and listed only open handovers. It was used the
+  first morning it existed.</p>
+
+  <h3>The thing that nearly killed it</h3>
+
+  <p>An early build sent an email at six in the morning summarising the previous day. It was
+  requested, it was built, and it was the single most disliked thing we shipped.</p>
+
+  <p>Supervisors read it on their phones before they were on site, could do nothing about any of it,
+  and arrived already behind. We removed it and did not replace it.</p>
+
+  <h2>Where this does not apply</h2>
+
+  <p>A yard with genuinely uniform handovers gets nothing from this. If the distribution really is
+  tight around the mean, the mean is a fine summary and the list will be empty most days.</p>
+
+  <p>We have not yet seen one, but we have only looked at eleven depots, and all eleven came to us
+  because somebody already suspected they had a problem.</p>
+
+  <p>That is a biased sample and it should be read as one.</p>
+
+  <div class="note">
+    <p>This article is invented in full. Northwick Analytics, the depots, the figures and the
+    quotations do not exist. It is committed as a parser fixture and nothing in it should be
+    read as a claim about any real organisation.</p>
+  </div>
+
+</article>
+</body>
+</html>

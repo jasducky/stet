@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end: start the server on a COPY of a real artefact and drive the
+"""End-to-end: start the server on a COPY of a committed fixture and drive the
 whole loop over HTTP - edit, comment, propose, approve - then verify the file
 on disk actually changed and that nothing outside the edited span moved.
 """
@@ -12,7 +12,11 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = Path.home() / "Documents/sample.html"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+# Resolved relative to this file, so the suite runs on a clean clone with no sibling
+# vault. prose-article is the fixture used here because the loop needs enough regions
+# with real text to edit, comment on and propose against.
+SRC = FIXTURES / "prose-article.html"
 TMP = Path("/tmp/artefact-review-e2e")
 PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}"
@@ -33,6 +37,13 @@ def call(path, body=None):
 
 
 def main():
+    # An unresolvable fixture is a named failure, never a stack trace at shutil.copy
+    # and never a silent skip. Eleven units verify with this suite.
+    if not SRC.exists():
+        print(f"FAIL  fixture missing: {SRC}")
+        print("      The fixture corpus is committed under tests/fixtures/.")
+        return 1
+
     if TMP.exists():
         shutil.rmtree(TMP)
     TMP.mkdir(parents=True)
@@ -66,7 +77,9 @@ def main():
         check("stamped ids absent from the file on disk", "data-rv-id" not in target.read_text())
 
         units = call("/__units")
-        check("units returned", len(units) > 40, f"{len(units)} units")
+        # Lower bound matches the fixture's recorded bound in probe.py, so a copy
+        # edit to the fixture does not fail this while a discovery regression does.
+        check("units returned", len(units) >= 36, f"{len(units)} units")
         target_unit = next(u for u in units
                            if u["editable"] and len(u["raw"].strip()) > 40)
 
