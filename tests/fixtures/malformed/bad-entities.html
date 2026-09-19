@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Malformed entity references</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 640px; margin: 48px auto; }
+  p { line-height: 1.6; }
+</style>
+</head>
+<body>
+  <h1>Entities, correct and otherwise</h1>
+
+  <p>A correct one first, so the fixture is not uniformly broken: Eastfield &amp; Lowry Dock
+  reported &lt;40 minutes, which is &quot;good&quot; by the standard in use.</p>
+
+  <p>An ampersand that is never an entity at all: Marchwood & Brantham, written the way
+  somebody types it rather than the way it should be escaped.</p>
+
+  <p>An entity opened and never terminated: Netherby &amp Ferrisgate, missing its semicolon
+  entirely, followed by ordinary text that must still be discoverable.</p>
+
+  <p>A numeric reference with no digits in it: &#; and a second one with nonsense where the
+  digits belong: &#zz; neither of which resolves to anything.</p>
+
+  <p>A named reference that does not exist: &notarealentity; sitting mid-sentence, and a
+  bare ampersand at the end of a line &</p>
+
+  <p>A stray semicolon with no entity in front of it; and an escaped one &amp;; doubled up.</p>
+
+  <p>The last paragraph is ordinary, so the document ends with a region that contains no
+  entity problems at all and can be edited normally.</p>
+</body>
+</html>

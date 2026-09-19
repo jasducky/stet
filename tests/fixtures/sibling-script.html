@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Yard chart — page with its own sibling script</title>
+<style>
+  body { font-family: "Helvetica Neue", Arial, sans-serif; max-width: 680px;
+         margin: 48px auto; color: #1b241f; }
+  h1 { font-size: 28px; }
+  p { line-height: 1.6; }
+  .chart { border: 1px solid #dfe4df; padding: 20px; margin-top: 24px; }
+  .chart-title { font-weight: 700; }
+</style>
+</head>
+<body>
+  <h1>Yard chart</h1>
+
+  <p>This page loads its own JavaScript from a file beside it, rather than inline. That is
+  the ordinary shape of an exported artefact, and it is the case R1.5's policy has to cover:
+  the review layer's own assets must still load while the document's do not.</p>
+
+  <p>The paragraph you are reading is in the file and is editable. The chart body below is
+  written by the sibling script, so its text is not in the file at all.</p>
+
+  <div class="chart">
+    <div class="chart-title">Median handover, current period</div>
+    <div id="chart-body">Waiting for the sibling script.</div>
+  </div>
+
+  <p>Note that the sibling script is referenced by src, with no inline DOM-write pattern in
+  the document itself. The static detection rule scans inline script bodies, so it does not
+  see this one — a known false negative, recorded beside I5 rather than fixed by guessing
+  harder.</p>
+
+  <p>Every figure this page would display is invented.</p>
+
+  <script src="sibling-chart.js"></script>
+</body>
+</html>

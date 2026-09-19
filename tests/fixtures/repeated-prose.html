@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Depot briefing — repeated prose</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 660px; margin: 48px auto; color: #1f2622; }
+  h1 { font-size: 30px; }
+  h2 { font-size: 20px; margin-top: 36px; }
+  p { line-height: 1.65; }
+  .callout { background: #f1f3ee; padding: 18px 22px; margin: 24px 0; }
+</style>
+</head>
+<body>
+  <h1>Depot briefing</h1>
+
+  <p>This fixture exists so text anchoring has something ambiguous to resolve. The same
+  sentence appears more than once, in separate regions, which is what breaks an anchor
+  that matches on text alone.</p>
+
+  <h2>Opening position</h2>
+
+  <p>The average is the one number that cannot show you the problem.</p>
+
+  <p>Everything in this section is invented. Northwick Analytics does not exist and neither
+  do any of the depots named anywhere in this corpus.</p>
+
+  <h2>Restated later, word for word</h2>
+
+  <p>A reader would see nothing odd about the repetition. A resolver matching on text alone
+  has two equally good candidates and no way to choose between them.</p>
+
+  <p>The average is the one number that cannot show you the problem.</p>
+
+  <div class="callout">
+    <p>The average is the one number that cannot show you the problem.</p>
+  </div>
+
+  <h2>Near-misses, which must not collide</h2>
+
+  <p>The average is the one number that cannot show you the problem today.</p>
+
+  <p>The average is the one number that cannot show you the problem.&nbsp;</p>
+
+  <p>the average is the one number that cannot show you the problem.</p>
+
+  <h2>Closing</h2>
+
+  <p>Three regions hold the sentence exactly. Three more hold something close enough to be
+  wrong to match, differing by a trailing word, a trailing space, and capitalisation.</p>
+</body>
+</html>

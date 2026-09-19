@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Handover summary — unclosed block elements</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 640px; margin: 48px auto; }
+  .box { border: 1px solid #ccc; padding: 16px; margin: 16px 0; }
+</style>
+</head>
+<body>
+  <h1>Handover summary
+
+  <p>The heading above is never closed, and neither is this paragraph. Hand-written
+  HTML does this constantly and browsers recover silently, so discovery has to as well.
+
+  <div class="box">
+    <p>A block element opened inside another, with neither closed.
+    <div class="box">
+      <p>And a second one nested inside the first, to make sure recovery does not
+      simply take the outermost element and treat everything as one region.
+
+  <p>A paragraph after all of that, still unclosed, with enough text in it to be a
+  realistic edit target rather than a stub.
+
+  <ul>
+    <li>A list item that is never closed
+    <li>Followed by another one
+    <li>And a third, with the list itself left open at the end of the document
+</body>
+</html>

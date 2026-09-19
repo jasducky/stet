@@ -35,6 +35,23 @@ TARGETS = {
     "table-report.html":    (38, 50, 0),
     "div-grid-mock.html":   (55, 72, 0),
     "deep-sections.html":   (90, 115, 0),
+    "repeated-prose.html":  (13, 18, 0),
+    "sibling-script.html":  (6, 9, 0),
+}
+
+# R1.4: malformed or hostile HTML must not crash discovery.
+#
+# These are asserted separately because a near-zero region count is a legitimate
+# outcome for a broken document, so the bounds above would be meaningless. What
+# must hold is that parse() returns rather than raising, and that the round trip
+# stays byte-exact on whatever it does find.
+#
+# name -> minimum regions expected (0 where recovery legitimately finds almost none)
+MALFORMED = {
+    "malformed/truncated.html":    1,
+    "malformed/unclosed.html":     1,
+    "malformed/deep-nest.html":    1,
+    "malformed/bad-entities.html": 1,
 }
 
 fails = []
@@ -99,10 +116,54 @@ for name, (lo, hi, min_locked) in TARGETS.items():
           f"{top[:30]:30} {overlap:8} {rt:>11}")
 
 print()
+print("R1.4 - malformed documents must not crash discovery")
+print("-" * 104)
+
+for name, min_regions in MALFORMED.items():
+    path = FIXTURES / name
+    if not path.exists():
+        print(f"{name[:30]:32} MISSING")
+        fails.append(f"{name}: fixture missing from {FIXTURES}")
+        continue
+
+    text = path.read_text(errors="replace")
+    try:
+        units = html_doc.parse(text)
+    except Exception as exc:                      # noqa: BLE001 - that is the assertion
+        print(f"{name[:30]:32} RAISED {type(exc).__name__}")
+        fails.append(f"{name}: discovery raised {type(exc).__name__}: {exc}")
+        continue
+
+    parsed += 1
+    spans = sorted((u.inner for u in units))
+    overlap = sum(1 for a, b in zip(spans, spans[1:]) if a[1] > b[0])
+    if overlap:
+        fails.append(f"{name}: {overlap} overlapping regions")
+    if len(units) < min_regions:
+        fails.append(f"{name}: {len(units)} regions, expected at least {min_regions}")
+
+    # the round trip must stay byte-exact even on a document this broken
+    rt = "n/a"
+    target = next((u for u in units if u.editable and len(u.raw(text).strip()) > 12), None)
+    if target:
+        marker = "ZZMARKERZZ"
+        new = html_doc.write(text, units, target.id, marker)
+        s, e = target.inner
+        ok = (new[:s] == text[:s]
+              and new[s:s + len(marker)] == marker
+              and new[s + len(marker):] == text[e:])
+        rt = "OK" if ok else "BROKEN"
+        if not ok:
+            fails.append(f"{name}: round-trip corrupted bytes outside the span")
+
+    print(f"{name[:30]:32} parsed, {len(units):3} regions, overlap {overlap}, round-trip {rt}")
+
+print()
 
 # An empty or unresolvable corpus must fail here rather than print a verdict.
-if parsed != len(TARGETS):
-    fails.append(f"only {parsed} of {len(TARGETS)} fixtures parsed")
+expected = len(TARGETS) + len(MALFORMED)
+if parsed != expected:
+    fails.append(f"only {parsed} of {expected} fixtures parsed")
 if not TARGETS:
     fails.append("TARGETS is empty - the suite would report success having tested nothing")
 

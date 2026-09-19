@@ -181,6 +181,34 @@ have to be written. That is why it is deferred rather than done.
 > **Known defect (R1.1).** Region ids are positional (`adapters/html_doc.py:223`, `u{i:03d}`), so an
 > insert or split reindexes every region after it. Not met today.
 
+> **Known defect (R1.4), measured 19 September 2026.** Discovery **does** crash on deeply nested
+> input. `html_doc.parse` recurses per element, so a document nesting past Python's recursion limit
+> raises `RecursionError` rather than returning a region set. Measured on the default limit of 1000:
+> depth 400 parses and returns 4 regions, depth 1000 raises. A generated or repeatedly-wrapped
+> document reaches this without being hostile, and a hostile one reaches it trivially.
+>
+> The committed `malformed/deep-nest.html` is held at depth 400, below the ceiling, so the corpus
+> stays usable and U3's "each malformed document parses without raising" holds. `probe.py` asserts
+> the raise-free path and has been checked against a 1200-deep document, where it reports
+> `RAISED RecursionError` and exits 1 — so this is a test that can fail, not one that cannot.
+>
+> **Build-or-bend choice, not yet made:** make discovery iterative, or raise the limit and document
+> a bound. Recommended: iterative, because a raised limit moves the crash rather than removing it.
+> Owner: the unit that takes R1.4.
+
+> **Known defect (R1.4), second half — "reported as such".** The requirement says a document that
+> cannot be parsed is *reported as such and served read-only*. Recovery is currently silent.
+> `malformed/unclosed.html` — unclosed `<h1>`, four unclosed `<p>`, two nested unclosed `<div>`,
+> three unclosed `<li>` — yields **one** region, the final `<li>`. Every other block produces
+> nothing. Nothing is reported, and a near-empty region set is indistinguishable from a document
+> that genuinely has one editable block.
+>
+> This is the same failure shape as a test suite reporting success having tested nothing: a clean
+> result produced by nothing having been found. **Build-or-bend choice, not yet made:** detect the
+> recovery case and serve read-only with a reason, or accept silent partial discovery and say so in
+> the README. Recommended: detect it — the tool's whole claim is that an edit reaches the file, and
+> a document where most regions were never found cannot honour that.
+
 > **Known defect (R1.2).** A locked region is **not** distinguishable at rest in a browser today.
 > The server stamps `data-rv-locked` correctly — the served HTML for `js-assembled.html` carries two
 > — but the document's own script then executes and an `innerHTML` assignment replaces the stamped
@@ -371,7 +399,7 @@ can be derived from an existing artefact.
 |---|---|---|
 | A JS-assembled page | I5, R1.2, R2.4, A3, A15 | hand-authored |
 | A div-only visual artefact | I3, R1.3 | hand-authored |
-| A malformed / truncated corpus | R1.4, A10 | hand-authored |
+| `malformed/` — four documents: `truncated`, `unclosed`, `deep-nest`, `bad-entities` | R1.4, A10 | hand-authored |
 | A page with repeated identical prose | R3.3, A6 | hand-authored |
 
 **Every fixture is invented.** The corpus was authored from scratch rather than copied from the
@@ -405,8 +433,14 @@ assertion ran. Both now name an unresolvable fixture and exit 1, and `probe.py` 
 on an empty corpus and on a region count outside the bounds recorded per fixture, which is what
 gives I3's "does not shatter" a real assertion.
 
-**Still to author (U3):** `malformed/` as four named documents — `truncated.html`, `unclosed.html`,
-`deep-nest.html`, `bad-entities.html` — plus `repeated-prose.html` and `sibling-script.html`.
+**U3 complete, 19 September 2026.** Fourteen fixtures committed. `malformed/` holds the four named
+documents; `repeated-prose.html` carries the same sentence in three byte-identical regions plus
+three near-misses that differ by a trailing word, a trailing `&nbsp;` and capitalisation, so an
+anchor matching on text alone has something real to fail against. `sibling-script.html` references
+its own external `.js` from beside it, which is the shape R1.5's policy has to cover.
+
+Authoring the malformed corpus found two R1.4 defects, both recorded above as known defects. They
+were not reworded into the requirement.
 
 ---
 
