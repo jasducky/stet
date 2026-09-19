@@ -1,0 +1,12 @@
+# Test dependencies. The tool itself has none - server.py and the adapters are
+# standard library only, and that is deliberate.
+#
+# After installing, fetch the browser binary once:
+#
+#     pip install -r requirements.txt
+#     playwright install chromium
+#
+# tests/probe.py and tests/e2e.py need none of this and run on a bare Python.
+# Only tests/browser.py and its consumers require a driver.
+
+playwright>=1.44
