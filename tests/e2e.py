@@ -182,8 +182,12 @@ def main():
         check("proposal cleared on rejection", "proposal" not in state[c2["id"]])
 
         print("\n5. the write endpoints refuse anything but the served page (R2.5)")
-        BROWSER_ONLY = ["/__edit", "/__comment", "/__reply", "/__approve",
-                        "/__reject", "/__resolve", "/__delete"]
+        # Derived from the server's own set, never re-typed here. A hardcoded
+        # list silently covers fewer endpoints than exist the moment one is
+        # added, while still reporting a clean pass.
+        sys.path.insert(0, str(ROOT))
+        import server as _srv
+        BROWSER_ONLY = sorted(_srv.BROWSER_ONLY)
         before_doc = target.read_text()
         sidecar = TMP / ".review" / target.stem
         before_side = sorted((f.name, f.read_text()) for f in sidecar.iterdir())
@@ -194,8 +198,9 @@ def main():
                                        "comment": "x", "reason": "x"},
                                   {"Content-Type": "application/json"})
             bare.append((ep, st_code))
-        check("all seven browser-only endpoints refuse a tokenless, Origin-less POST",
-              all(c == 403 for _, c in bare),
+        check(f"all {len(BROWSER_ONLY)} browser-only endpoints refuse a tokenless, "
+              f"Origin-less POST",
+              all(c == 403 for _, c in bare) and len(BROWSER_ONLY) >= 9,
               ", ".join(f"{e}={c}" for e, c in bare))
 
         st_code, _ = raw_call("/__edit", {"id": target_unit["id"], "text": "HIJACKED"},

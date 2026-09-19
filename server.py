@@ -48,7 +48,7 @@ SESSION_TOKEN = secrets.token_urlsafe(32)
 # checked before the request body is read at all.
 BROWSER_ONLY = frozenset({
     "/__edit", "/__comment", "/__reply", "/__approve",
-    "/__reject", "/__resolve", "/__delete",
+    "/__reject", "/__resolve", "/__delete", "/__replace", "/__bin",
 })
 
 # Agent-reachable: /__propose only. The agent posts from a shell with no browser,
@@ -370,10 +370,20 @@ class Handler(BaseHTTPRequestHandler):
                              "anchor": anchor}
             c["status"] = "proposed"
 
-        elif p == "/__approve":
+        elif p in ("/__approve", "/__replace"):
             pr = c.get("proposal")
             if not pr:
                 return self._json({"ok": False, "error": "nothing proposed"}, 400)
+
+            # R3.5. Re-placing updates the anchor and then re-attempts the apply
+            # down the SAME path as an ordinary approval, so the two can never
+            # disagree about where a proposal lands.
+            if p == "/__replace":
+                new_anchor = html_doc.anchor_text(data.get("anchor", ""))
+                if not new_anchor:
+                    return self._json({"ok": False, "status": "refused",
+                                       "error": "select some text to re-place this onto"}, 400)
+                pr["anchor"] = new_anchor
 
             # R3.3. Resolve the anchor to a REGION. Three outcomes, and two of
             # them write nothing and discard nothing (R3.4).
@@ -441,6 +451,15 @@ class Handler(BaseHTTPRequestHandler):
             if who != "Claude":
                 st.append_inbox({"type": "reply", "at": iso(), "id": c["id"],
                                  "text": data["text"]})
+
+        elif p == "/__bin":
+            # R3.5: binning is a single action. The thread stays and returns to
+            # open; only the proposal goes, and the event records that it did.
+            had = c.pop("proposal", None)
+            c["status"] = "open"
+            st.append_inbox({"type": "binned", "at": iso(), "id": c["id"],
+                             "author": who,
+                             "anchor": (had or {}).get("anchor", "")[:200]})
 
         elif p == "/__resolve":
             c["status"] = "applied"

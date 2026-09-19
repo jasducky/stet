@@ -308,6 +308,23 @@ class Harness:
                 return host ? (host.innerText || '').trim() : '';
             }""")
 
+    def api(self, path, body=None):
+        """POST to the served page's own origin, carrying its token.
+
+        Used to set up proposals for the re-place tests. The interaction under
+        test is still driven through the page; this only creates the state.
+        """
+        token = self.page.evaluate("() => (window.__RV__||{}).token || ''")
+        return self.page.evaluate(
+            """async ([path, body, token]) => {
+                const r = await fetch(path, {
+                    method: body === null ? 'GET' : 'POST',
+                    headers: {'Content-Type': 'application/json', 'X-RV-Token': token},
+                    body: body === null ? undefined : JSON.stringify(body),
+                });
+                try { return await r.json(); } catch (e) { return null; }
+            }""", [path, body, token])
+
     def file_on_disk(self):
         """The served file's current bytes, read from disk, not from the page."""
         return self.target.read_bytes()
@@ -484,6 +501,149 @@ def _selftest():
                 hj.close()
         finally:
             ha.close()
+
+        print("\n5e. R3.4/R3.5 - a detached proposal is visible and recoverable")
+        hr = Harness(fixture=FIXTURES / "prose-article.html")
+        try:
+            hr.start()
+            ids = hr.region_ids(editable_only=True, min_text=80)
+            victim, elsewhere = ids[2], ids[4]
+
+            # make a proposal, then edit its words away so it orphans
+            cid = hr.api("/__comment", {"unit": victim, "quote": "",
+                                        "comment": "will be orphaned"})["id"]
+            hr.api("/__propose", {"id": cid, "unit": victim, "text": "RE-PLACED TEXT LANDED"})
+            hr.type_into(victim, "these words are completely different now")
+            hr.page.wait_for_timeout(300)
+            appr = hr.api("/__approve", {"id": cid})
+            check("e. it orphans once its words are gone",
+                  appr.get("status") == "orphaned", str(appr.get("status")))
+
+            hr.reload()
+            hr.page.wait_for_timeout(300)
+            panel = hr.panel_text()
+            # innerText reflects text-transform, and the heading is uppercased in
+            # CSS, so this compares case-insensitively rather than against how it
+            # happens to be typed in the source.
+            check("e. the card says it is orphaned", "orphaned" in panel.lower())
+            check("e. and shows the words it was written against",
+                  "timestamps" in panel or "handover" in panel, repr(panel[-160:]))
+            check("e. offering both re-place and bin",
+                  hr.page.is_visible('[data-a="replace"]')
+                  and hr.page.is_visible('[data-a="bin"]'))
+
+            print("\n5f. re-place mode takes the selection gesture")
+            hr.page.click('[data-a="replace"]')
+            check("f. the chrome shows a persistent re-placing state",
+                  hr.page.is_visible("#rv-replacebar"),
+                  hr.page.evaluate(
+                      "() => (document.getElementById('rv-replacebar')||{}).innerText || ''"
+                  ).replace("\n", " ")[:70])
+
+            hr.select_text(elsewhere, 0, 40)
+            hr.page.wait_for_timeout(250)
+            check("f. the comment popup does NOT appear",
+                  not hr.page.is_visible(".rv-selpop"))
+            check("f. a re-place confirm appears instead",
+                  hr.page.is_visible(".rv-replacepop"),
+                  hr.page.evaluate(
+                      "() => (document.querySelector('.rv-replacepop')||{}).textContent || ''"))
+
+            print("\n5g. a selection crossing a region boundary is refused")
+            hr.page.evaluate("() => document.querySelector('.rv-replacepop').remove()")
+            cross = hr.page.evaluate(
+                """([a, b]) => {
+                    const na = document.querySelector(`[data-rv-id="${a}"]`);
+                    const nb = document.querySelector(`[data-rv-id="${b}"]`);
+                    const r = document.createRange();
+                    r.setStart(na.firstChild, 0);
+                    r.setEnd(nb.firstChild, 10);
+                    const s = window.getSelection();
+                    s.removeAllRanges(); s.addRange(r);
+                    const rect = r.getBoundingClientRect();
+                    na.dispatchEvent(new MouseEvent('mouseup', {
+                        bubbles: true, clientX: rect.right, clientY: rect.bottom }));
+                    return String(s).length;
+                }""", [ids[6], ids[7]])
+            hr.page.wait_for_timeout(250)
+            check("g. a cross-region selection is offered a refusal, not a confirm",
+                  hr.page.is_visible(".rv-replacepop-bad"),
+                  hr.page.evaluate(
+                      "() => (document.querySelector('.rv-replacepop')||{}).textContent || ''"))
+            before_cross = hr.file_on_disk()
+            hr.page.click(".rv-replacepop")
+            hr.page.wait_for_timeout(300)
+            check("g. clicking it writes nothing", hr.file_on_disk() == before_cross)
+            check("g. and re-place mode stays active", hr.page.is_visible("#rv-replacebar"))
+
+            print("\n5h. Escape cancels, leaving the proposal intact")
+            hr.page.keyboard.press("Escape")
+            hr.page.wait_for_timeout(250)
+            check("h. mode cleared", not hr.page.is_visible("#rv-replacebar"))
+            state = hr.api("/__comments")
+            byid = {c["id"]: c for c in state}
+            check("h. the proposal is still there",
+                  byid[cid].get("proposal", {}).get("text") == "RE-PLACED TEXT LANDED")
+
+            print("\n5i. re-place: select, confirm, it applies there")
+            hr.page.click('[data-a="replace"]')
+            hr.select_text(elsewhere, 0, 40)
+            hr.page.wait_for_timeout(250)
+            check("i. a valid confirm is offered",
+                  hr.page.is_visible(".rv-replacepop")
+                  and not hr.page.is_visible(".rv-replacepop-bad"))
+            hr.page.click(".rv-replacepop")
+            hr.page.wait_for_timeout(600)
+            check("i. the proposal applied at the new place",
+                  b"RE-PLACED TEXT LANDED" in hr.file_on_disk())
+            check("i. and mode cleared itself", not hr.page.is_visible("#rv-replacebar"))
+
+            print("\n5j. bin removes the proposal and records it")
+            cid2 = hr.api("/__comment", {"unit": ids[9], "quote": "",
+                                         "comment": "to be binned"})["id"]
+            hr.api("/__propose", {"id": cid2, "unit": ids[9], "text": "WILL BE BINNED"})
+            hr.api("/__bin", {"id": cid2})
+            state = {c["id"]: c for c in hr.api("/__comments")}
+            check("j. the proposal is gone", "proposal" not in state[cid2])
+            check("j. the thread survives and is open again",
+                  state[cid2]["status"] == "open")
+            check("j. nothing of it reached the file",
+                  b"WILL BE BINNED" not in hr.file_on_disk())
+
+            print("\n5k. R2.7 - typed content survives a refused write (A16)")
+            rid = hr.region_ids(editable_only=True, min_text=60)[1]
+            sel = f'[data-rv-id="{rid}"]'
+            hr.page.hover(sel)
+            hr.page.wait_for_selector(".rv-tools.rv-show", timeout=3000)
+            hr.page.click('.rv-tools [data-a="edit"]')
+            hr.page.wait_for_selector(f"{sel}[contenteditable='true']", timeout=3000)
+            # type something the validator will refuse
+            hr.page.evaluate(
+                """(rid) => {
+                    const n = document.querySelector(`[data-rv-id="${rid}"]`);
+                    n.focus();
+                    const r = document.createRange(); r.selectNodeContents(n);
+                    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+                }""", rid)
+            # Typing angle brackets into a contenteditable produces escaped TEXT,
+            # not markup - correct behaviour, and nothing for the validator to
+            # refuse. The raw-HTML editor is the real path where a person types
+            # something a write can reject, so the refusal is produced there.
+            hr.page.click('.rv-editbar [data-a="raw"]')
+            hr.page.wait_for_selector(".rv-raw", timeout=3000)
+            hr.page.fill(".rv-raw", "my careful rewrite <iframe src=x></iframe>")
+            before_k = hr.file_on_disk()
+            hr.page.click('.rv-editbar [data-a="save"]')
+            hr.page.wait_for_timeout(600)
+            check("k. the write was refused", hr.page.is_visible(".rv-editbar"))
+            check("k. and nothing reached the file", hr.file_on_disk() == before_k)
+            check("k. the reason is shown", "Not saved" in hr.status_text(),
+                  hr.status_text()[:80])
+            typed = hr.page.evaluate("() => (document.querySelector('.rv-raw')||{}).value || ''")
+            check("k. the typed content is still there for retry",
+                  "my careful rewrite" in typed, repr(typed[:60]))
+        finally:
+            hr.close()
 
         print("\n6. panel_text is a distinct surface")
         panel = h.panel_text()
