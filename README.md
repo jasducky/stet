@@ -67,7 +67,7 @@ assistant is a tool you lose when you change assistant.
 1. `watch.py <file> --as <name> --since <cursor>` — blocks until something happens
 2. read the returned `comment` or `edit` events
 3. read `.review/<name>/comments.json` for the full thread
-4. `POST /__propose {id, unit, text, note}`
+4. `POST /__propose {id, unit, text, note, author}` with the same identity as `--as`
 5. `watch.py` again with the new cursor
 
 Events go to stdout, one JSON object per line, exactly as the server wrote them. The
@@ -133,9 +133,15 @@ Everything the agent reads sits in `.review/<name>/` beside the artefact:
 
 | File | Holds |
 |---|---|
-| `edits.md` | Every change, before and after, with an author |
+| `edits.md` | Every change, before and after, with its author and, for proposals, its approver |
+| `edits.jsonl` | Append-only change records used for hover attribution |
 | `comments.json` | Threads, proposals, statuses |
 | `inbox.jsonl` | Append-only event stream. Point a file watcher at it |
+
+Hover a changed block to see who last changed it and who approved a proposal.
+Attribution matches the block's exact HTML content to the latest matching change
+record. Unmatched content has no label; identical blocks share attribution.
+Older changes recorded only in `edits.md` have no hover label.
 
 ---
 

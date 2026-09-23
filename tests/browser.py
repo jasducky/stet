@@ -687,6 +687,63 @@ def _selftest():
         finally:
             hr.close()
 
+        print("\n5l. attribution is visible on hover after approval and direct editing")
+        with Harness() as hat:
+            aids = hat.region_ids(editable_only=True, min_text=80)
+            approved_id, direct_id, untouched_id = aids[:3]
+            cid = hat.api("/__comment", {"unit": approved_id, "quote": "",
+                                          "comment": "attribution browser test"})["id"]
+            hat.api("/__propose", {"id": cid, "unit": approved_id,
+                                    "text": "BROWSER ATTRIBUTION APPROVED", "author": "Codex"})
+            result = hat.api("/__approve", {"id": cid, "author": "Julia"})
+            check("l. attributed proposal applied", result.get("ok"), str(result))
+            hat.reload()
+            approved_sel = '[data-rv-id][data-rv-attribution]'
+            approved = hat.page.locator(approved_sel).filter(has_text="BROWSER ATTRIBUTION APPROVED")
+            check("l. approved region carries attribution after its id changed", approved.count() == 1)
+            approved.hover()
+            hat.page.wait_for_selector("#rv-attribution", state="visible", timeout=3000)
+            check("l. approved hover names both people",
+                  hat.page.locator("#rv-attribution").inner_text() == "Last changed by Codex, approved by Julia")
+            hat.page.hover(f'[data-rv-id="{untouched_id}"]')
+            check("l. untouched region has no attribution marker",
+                  hat.page.locator(f'[data-rv-id="{untouched_id}"]').get_attribute("data-rv-attribution") is None)
+            check("l. moving to an untouched region hides the previous attribution",
+                  not hat.page.is_visible("#rv-attribution"))
+
+            hat.type_into(direct_id, "BROWSER ATTRIBUTION DIRECT")
+            hat.page.wait_for_timeout(300)
+            hat.page.hover(f'[data-rv-id="{untouched_id}"]')
+            direct = hat.page.locator('[data-rv-id]').filter(has_text="BROWSER ATTRIBUTION DIRECT")
+            direct.hover()
+            hat.page.wait_for_selector("#rv-attribution", state="visible", timeout=3000)
+            check("l. direct edit hover updates after saving without manual reload",
+                  hat.page.locator("#rv-attribution").inner_text() == "Last changed by Julia")
+            hat.reload()
+            hat.page.locator('[data-rv-id]').filter(has_text="BROWSER ATTRIBUTION DIRECT").hover()
+            hat.page.wait_for_selector("#rv-attribution", state="visible", timeout=3000)
+            check("l. direct attribution also survives page reload",
+                  hat.page.locator("#rv-attribution").inner_text() == "Last changed by Julia")
+            hostile = '</script><img src=x onerror="window.attributionAttack=1">'
+            hostile_id = aids[3]
+            cid = hat.api("/__comment", {"unit": hostile_id, "quote": "",
+                                          "comment": "author is a label"})["id"]
+            hat.api("/__propose", {"id": cid, "unit": hostile_id,
+                                    "text": "BROWSER HOSTILE AUTHOR LABEL", "author": hostile})
+            hat.api("/__approve", {"id": cid, "author": "Julia"})
+            hat.reload()
+            hat.page.locator('[data-rv-id]').filter(has_text="BROWSER HOSTILE AUTHOR LABEL").hover()
+            hat.page.wait_for_selector("#rv-attribution", state="visible", timeout=3000)
+            check("l. markup in an author stays literal hover text",
+                  hat.page.locator("#rv-attribution").inner_text()
+                  == f"Last changed by {hostile}, approved by Julia")
+            check("l. author markup creates no element and executes nothing",
+                  hat.page.locator('#rv-attribution img').count() == 0
+                  and hat.page.evaluate("() => window.attributionAttack === undefined"))
+            check("l. hover attribution never enters the target file",
+                  b"data-rv-attribution" not in hat.file_on_disk()
+                  and b"Last changed by" not in hat.file_on_disk())
+
         print("\n6. panel_text is a distinct surface")
         panel = h.panel_text()
         check("panel readable", isinstance(panel, str), repr(panel[:48]))

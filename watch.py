@@ -15,7 +15,8 @@ The agent's turn:
     1. watch.py <file> --as claude --since <cursor>   blocks until something happens
     2. read the returned comment or edit events
     3. read .review/<name>/comments.json for the full thread
-    4. POST /__propose {id, unit, text, note}
+    4. POST /__propose {id, unit, text, note, author: "claude"}
+       Pass author with the exact same identity as watch.py --as.
     5. watch.py again with the new cursor
 
 Output, deliberately split so each stream has one job (R4.2, R4.3):
@@ -71,7 +72,8 @@ def main(argv=None):
     ap.add_argument("file", help="the .html artefact being reviewed")
     ap.add_argument("--as", dest="identity", required=True,
                     help="who is watching. Events with this author are not "
-                         "returned, so an actor is never woken by its own action")
+                         "returned, so an actor is never woken by its own action. "
+                         "Pass the same identity as author in POST /__propose")
     ap.add_argument("--since", default="0",
                     help="cursor from a previous run. Position in the stream, so "
                          "it stays valid across a server restart")

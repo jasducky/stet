@@ -315,7 +315,9 @@ have to be written. That is why it is deferred rather than done.
 
 - **R2.1** Text is editable in place, in the rendered page.
 - **R2.2** An edit persists to the source file immediately, as a byte-range write (I2).
-- **R2.3** Every edit is recorded with before, after and author, in `edits.md`.
+- **R2.3** Every edit is recorded with before, after and author, in `edits.md` and
+  `edits.jsonl`. For approved proposals the author is the proposer, and the approver is recorded
+  separately, on both browser and CLI approval paths. Direct edits have no approver.
 - **R2.4** An edit to a locked region is refused with its reason, never silently dropped.
 - **R2.5** **Every write endpoint rejects a request that did not come from the served page.** The
   server checks `Origin` / `Sec-Fetch-Site` and additionally requires a per-session token minted at
@@ -328,6 +330,13 @@ have to be written. That is why it is deferred rather than done.
   hostile document can replace.
 - **R2.7** When a write is refused after the human has typed into a region, the in-progress content
   is preserved for retry, never discarded by a re-read.
+- **R2.8** Hovering an editable region with a recorded change shows `Last changed by <author>`
+  and, for an approved proposal, `, approved by <approver>`. Attribution uses the latest appended
+  record whose `after` exactly equals the region's current raw inner HTML, never its region id.
+  Unmatched content shows no attribution, including edits made outside stet. Identical content in
+  multiple regions shares attribution; restoring old content can match an older record. This is
+  content matching, not proof of a region's history or an authenticated identity. The state and
+  hover layer are delivered at serve time only; no review markup reaches the target file.
 
 > **RESOLVED 19 September 2026.** R2.5 by U4 (origin / `Sec-Fetch-Site` plus a per-process session
 > token on the seven browser-only endpoints), R2.6 by U6 (payload validation in `Store.apply_edit`,
@@ -370,6 +379,10 @@ have to be written. That is why it is deferred rather than done.
 - **R3.7** Approval is available from the browser and from the CLI (`server.py <file> --approve
   <cid>`). Both are human-initiated. The CLI verb is retained: under a cooperative gate it is a
   convenience, not a hole, and an agent that wanted to bypass the gate has simpler routes.
+- **R3.8** A proposal stores its caller's `author`. Agents pass the same identity as `watch.py
+  --as`; an omitted or empty author retains the server's existing human-author fallback. Legacy
+  proposals without a stored author are credited to `unknown agent` on approval. Author names
+  remain labels, never credentials.
 
 > R3.2 and R3.3 replace `block: N` anchoring, which can land an approved proposal on the wrong
 > content after a split. Anchoring to a byte offset rather than a region would also skip the
@@ -437,6 +450,8 @@ surface; see *The agent's turn* below for the loop that defines it.
 > can learn of it from the stream. Fixing only `/__reply` leaves this in place.
 
 **Event types**, all already emitted: `comment`, `edit`, `reply`, `approved`, `rejected`.
+An `approved` event keeps the approver as `author` and includes the proposal's author as
+`proposer` (or `unknown agent` for a legacy proposal), including approvals through the CLI.
 
 ### The agent's turn
 
@@ -445,7 +460,7 @@ The loop, which is what "no agent-specific capability" means in practice:
 1. `python3 watch.py <file> --as <identity> --since <cursor>` — blocks until something happens
 2. Read the returned `comment` or `edit` events
 3. Read `comments.json` for the full thread
-4. `POST /__propose {id, unit, text, note}` with the anchor text
+4. `POST /__propose {id, unit, text, note, author}` with the anchor text and the same author as `--as`
 5. `watch.py` again with the new cursor
 6. Act on the `approved` or `rejected` event
 7. Store the cursor and return to 1
@@ -458,7 +473,13 @@ Nothing in that loop requires a capability specific to any agent. It is a comman
 
 - **R5.1** `inbox.jsonl` is append-only. One line per event. Never rewritten.
 - **R5.2** `comments.json` holds threads, proposals and statuses.
-- **R5.3** `edits.md` holds every change with before, after and author.
+- **R5.3** `edits.md` holds every change with before, after and author, plus the approver for
+  approved proposals. Its heading is `## <time> - <author> - approved by <approver> - <unit> <tag>`;
+  direct edits omit the `approved by` part. `edits.jsonl` is append-only, one object per change
+  with `time` (UTC ISO 8601), `unit`, `tag`, `author`, `approved_by` (null for direct edits),
+  `before` and `after`. Both logs use the same timestamp. No-op edits add no change record.
+  Existing Markdown history is retained without guessing a machine-readable backfill. Hover
+  attribution reads the JSONL records; malformed records are skipped.
 - **R5.4** An agent watches `inbox.jsonl` and reads the others on demand. It never polls them.
 
 ### R6. Server lifecycle
