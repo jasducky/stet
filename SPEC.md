@@ -39,7 +39,8 @@ agent's individual rewrite gated**.
 |---|---|---|
 | **Plannotator** (8.1k stars, nine agent integrations) | Markdown yes, **HTML annotate-only** | No: one whole-document approve/dismiss to the calling hook |
 | **Artifact Server** (Plannotator sibling) | **Yes**, writes to the linked file | No agent loop at all |
-| **Claude Artifacts** | No, comment threads only | No: Claude republishes the page |
+| **Claude Artifacts** (HTML) | No, comment threads only (Team/Enterprise org shares) | No: Claude republishes the page |
+| **Claude Docs** (beta) | Yes, but in Claude's own rich-text doc, not your file | No: *"Nothing is locked while Claude works"* |
 | **Ch00k/claude-review** | Markdown only | Threaded commenting, no in-place edit |
 | **make-pages-interactive** | Not its purpose | Not its purpose |
 | **stet** | **Yes** | **Yes, region by region** |
