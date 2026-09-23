@@ -1,6 +1,6 @@
 # stet
 
-**Fix the words in an HTML document yourself. Your AI agent proposes its changes, and they reach the file only when you approve them.**
+**You and your AI agent work on the same HTML document. You type your changes straight into it, the agent proposes changes of its own, and each proposal reaches the file only when you approve it.**
 
 ![stet showing a document with a comment and a proposed change waiting for approval](docs/screenshot.png)
 
@@ -14,8 +14,8 @@ until you press **Approve and apply**.*
 You work with an AI coding agent, such as Claude Code or Codex, and it writes you HTML
 documents: a report, a one-pager, a mock, a brief. They look good and they are nearly right.
 
-You want to change a few sentences, and you want the agent to help with the rest without
-quietly rewriting paragraphs you were happy with.
+You want to finish the document together: fix a few sentences yourself, ask the agent to
+rework others, and keep the paragraphs you were already happy with exactly as they are.
 
 ## The problem
 
@@ -25,7 +25,10 @@ When a document is nearly right, your options are usually poor:
 - **Open the markup and edit it by hand**, hunting for your sentence between the tags
 - **Copy the text somewhere else**, fix it, and paste it back into a copy that has lost the design
 
-And whichever you pick, nothing asks the agent to wait for your yes before it changes your words.
+Chat tools have the same gap. An HTML artifact in Claude can only be changed by
+[asking Claude in the conversation](https://support.claude.com/en/articles/9487310), so you
+cannot type into it yourself, and when the agent changes something, the change lands without
+waiting for your yes.
 
 ## What stet gives you
 
@@ -34,11 +37,12 @@ And whichever you pick, nothing asks the agent to wait for your yes before it ch
   Save, and that block is written back into the real file.
 - **Only your sentence changes.** The rest of the file stays byte for byte as it was, so nothing
   is reformatted and a git diff shows exactly what you changed.
-- **The agent proposes, you decide.** When the agent answers a comment, its rewrite appears as
-  a proposal beside the text, and you approve it or send it back. Until you approve, the file
-  does not change.
-- **A record of who changed what.** Every edit, yours and the agent's, is logged with before,
-  after and author in a `.review/` folder beside the document.
+- **The agent proposes, you decide.** Leave a comment and the agent answers with a rewrite,
+  shown beside the text. You approve it or send it back, and until you approve, the file stays
+  as it is.
+- **You can see who changed what.** Hover over a block and it shows who changed it last, for
+  example *Last changed by Codex, approved by Julia*. Every change is also logged with before,
+  after, who proposed it and who approved it, in a `.review/` folder beside the document.
 
 ---
 
@@ -98,6 +102,8 @@ Then run watch.py again with the new cursor.
 ```
 
 Change `~/stet` to wherever you cloned it, and the port if you started the server with `--port`.
+Keep `author` the same as the name after `--as`, because that name is what the page shows
+when you hover over a block the agent changed.
 
 **What the agent does on each turn:**
 
@@ -112,7 +118,7 @@ are reserved for you, in the page.
 
 The server stops by itself after 15 minutes in which you have not touched the page. Start it
 again and everything is still there: comments, proposals and the record of edits live in
-`.review/`, not in the server.
+`.review/`, so they survive a restart.
 
 ---
 
@@ -123,6 +129,7 @@ again and everything is still there: comments, proposals and the record of edits
 | [Plannotator](https://github.com/backnotprop/plannotator) | Comments only on HTML | On Markdown | One approval for the whole document |
 | [claude-review](https://github.com/Ch00k/claude-review) | No, Markdown only | No, you comment and the agent edits | No |
 | [Artifact Server](https://github.com/plannotator/artifact-server) | Yes | Yes | No agent involved |
+| [Claude artifacts](https://support.claude.com/en/articles/9487310) | No, it lives inside Claude | No, you ask Claude to change an HTML artifact | No |
 | [Claude Docs](https://support.claude.com/en/articles/16923645-get-started-with-claude-docs) | No, a document inside Claude | Yes | No, the agent's edits land straight away |
 | [Revise](https://revise.io) | No, its own editor | Yes | Yes, as suggested edits |
 | **stet** | **Yes** | **Yes** | **Yes, one change at a time** |
@@ -137,6 +144,9 @@ the mature choice.
 - **The approval step relies on the agent using stet.** An agent that can write files can still
   open your HTML and change it directly, and no tool running on your machine can stop that.
   stet notices when the file changes underneath it and refuses to write over the change.
+- **The page shows the name the agent gives**, and nothing checks it. An agent that
+  sends no name has its proposal credited to you, and a block changed outside stet shows no
+  name at all.
 - **Text built by the page's own JavaScript can be commented on, not edited.** That text is not
   in the file, so an edit to it could not be saved. stet marks those blocks as comment-only
   rather than accept an edit it would lose.
@@ -148,8 +158,8 @@ the mature choice.
 ## More
 
 - **Options:** `python3 server.py <file.html> [--port 8790] [--author NAME] [--detach] [--idle-timeout 900]`.
-  `--detach` keeps the server running after the command that started it ends, which is what an
-  agent needs.
+  `--author` is your name as it appears in the record, and `--detach` keeps the server running
+  after the command that started it ends, which is what an agent needs.
 - **How it works, and the tests:** [docs/how-it-works.md](docs/how-it-works.md)
 - **Exact behaviour:** [SPEC.md](SPEC.md)
 - **The name:** *stet* is the proofreader's mark meaning *let it stand*, the note an editor writes

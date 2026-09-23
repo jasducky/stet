@@ -74,6 +74,15 @@
   padding: 4px 9px; font: 11.5px ui-sans-serif, -apple-system, sans-serif; cursor: pointer;
 }
 .rv-tools button:hover { background: #2e3841; }
+#rv-attribution {
+  color: #9aa3ad; padding: 4px 8px; align-self: center;
+  font: 11px/1.4 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  max-width: min(360px, 50vw);
+  /* One line, always. The toolbar sits just above the region, so a label that
+     wraps grows the toolbar downward over the very text being hovered. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#rv-attribution[hidden] { display: none; }
 .rv-tools .rv-lock { display: none; color: #f0c674; font: 11px ui-sans-serif, sans-serif; padding: 4px 8px; align-items: center; }
 .rv-tools.rv-is-locked .rv-lock { display: flex; }
 .rv-tools.rv-is-locked [data-a="edit"] { display: none; }

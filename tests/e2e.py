@@ -95,6 +95,170 @@ def _port_free(port):
         return True
 
 
+def attribution_checks(target, check):
+    """Exercise both approval doors and raw-content attribution on real writes."""
+    print("\n16. attribution: author, approver and exact current content")
+    side = target.parent / ".review" / target.stem
+
+    def records():
+        path = side / "edits.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def fresh():
+        return next(u for u in call("/__units") if u["editable"] and len(u["raw"]) > 80)
+
+    def propose(unit, text, author="Codex"):
+        cid = call("/__comment", {"unit": unit["id"], "quote": "",
+                                  "comment": "attribution test"})["id"]
+        data = {"id": cid, "unit": unit["id"], "text": text}
+        if author is not None:
+            data["author"] = author
+        result = call("/__propose", data)
+        assert result.get("ok"), result
+        return cid
+
+    def current(raw):
+        return next(u for u in call("/__units") if u["raw"] == raw)
+
+    def approved_event(cid):
+        return next(e for e in reversed([json.loads(line) for line in
+                    (side / "inbox.jsonl").read_text().splitlines()])
+                    if e["type"] == "approved" and e["id"] == cid)
+
+    # Serving acknowledges any earlier CLI/external changes in the existing suite.
+    call("/")
+    unit = fresh()
+    raw = "Attribution keeps exact &amp; source markup."
+    cid = propose(unit, raw)
+    thread = next(c for c in call("/__comments") if c["id"] == cid)
+    check("proposal persists the caller's author", thread["proposal"].get("author") == "Codex")
+    before = target.read_bytes()
+    check("proposal alone writes no target bytes", raw.encode() not in before)
+    reply = call("/__approve", {"id": cid, "author": "Julia"})
+    check("named proposal approved over HTTP", reply.get("ok"), str(reply))
+    rows = records()
+    row = rows[-1] if rows else {}
+    check("machine record has every required field",
+          {"time", "unit", "tag", "author", "approved_by", "before", "after"} <= row.keys())
+    check("HTTP record preserves exact before/after and both identities",
+          row.get("before") == unit["raw"] and row.get("after") == raw
+          and row.get("author") == "Codex" and row.get("approved_by") == "Julia")
+    check("HTTP record identifies the changed region and tag",
+          row.get("unit") == unit["id"] and row.get("tag") == unit["tag"])
+    heading = f"## {row.get('time')} - Codex - approved by Julia - {unit['id']} <{unit['tag']}>"
+    check("human log heading names proposer and approver",
+          heading in (side / "edits.md").read_text().splitlines())
+    event = approved_event(cid)
+    check("approved inbox event keeps approver as actor and adds proposer",
+          event.get("author") == "Julia" and event.get("proposer") == "Codex")
+    landed = current(raw)
+    check("editing changes this region's own id", landed["id"] != unit["id"])
+    expected = {"author": "Codex", "approved_by": "Julia"}
+    attribution = call("/__attribution")
+    check("attribution follows raw content to the current id",
+          isinstance(attribution, dict) and attribution.get(landed["id"]) == expected
+          and unit["id"] not in attribution)
+    page = call("/")
+    config = json.loads(re.search(r"window\.__RV__=(\{.*?\});</script>", page, re.S).group(1))
+    check("serve-time state and attribution endpoint agree", config.get("attribution") == attribution)
+    check("serving attribution writes no review markup to target",
+          target.read_bytes() == before.replace(unit["raw"].encode(), raw.encode(), 1)
+          and b"data-rv-attribution" not in target.read_bytes())
+
+    no_op = call("/__edit", {"id": landed["id"], "text": raw, "author": "Julia"})
+    check("a no-op edit adds no attribution record and preserves the last changer",
+          no_op.get("ok") and no_op.get("changed") is False and records() == rows
+          and call("/__attribution").get(landed["id"]) == expected)
+
+    # Record order, not timestamp sort or text-normalised matching, determines ownership.
+    prefix = (side / "edits.jsonl").read_bytes() if rows else b""
+    call("/__edit", {"id": landed["id"], "text": "Temporary attribution text.", "author": "Julia"})
+    interim = current("Temporary attribution text.")
+    call("/__edit", {"id": interim["id"], "text": raw, "author": "Julia"})
+    latest = records()[-1] if records() else {}
+    check("direct edit records human author with null approver",
+          latest.get("author") == "Julia" and "approved_by" in latest and latest["approved_by"] is None)
+    check("machine records append without rewriting earlier records",
+          (side / "edits.jsonl").read_bytes().startswith(prefix) and len(records()) == len(rows) + 2
+          if (side / "edits.jsonl").exists() else False)
+    check("latest matching record wins when content returns",
+          call("/__attribution").get(current(raw)["id"]) == {"author": "Julia", "approved_by": None})
+    direct_heading = f"## {latest.get('time')} - Julia - {interim['id']} <{interim['tag']}>"
+    check("direct human heading has no approval label", direct_heading in (side / "edits.md").read_text().splitlines())
+    changed_raw = raw.replace("&amp;", "&#38;")
+    target.write_bytes(target.read_bytes().replace(raw.encode(), changed_raw.encode(), 1))
+    check("equivalent rendered text with different raw markup has no attribution",
+          current(changed_raw)["id"] not in call("/__attribution"))
+    call("/")
+
+    # Re-place must retain the proposer even when the destination changes.
+    source = fresh()
+    cid = propose(source, "Re-placed attribution text.")
+    dest = current(changed_raw)
+    result = call("/__replace", {"id": cid, "anchor": changed_raw, "author": "Julia"})
+    check("re-place uses the original proposer and current approver",
+          result.get("ok") and records()[-1].get("author") == "Codex"
+          and records()[-1].get("approved_by") == "Julia"
+          and approved_event(cid).get("proposer") == "Codex", str(result))
+
+    # The compatibility fallback for a new authorless request is the server author.
+    unit = fresh()
+    cid = propose(unit, "Fallback identity proposal.", author=None)
+    thread = next(c for c in call("/__comments") if c["id"] == cid)
+    check("new authorless proposal preserves resolved server author",
+          thread["proposal"].get("author") == "Julia")
+    call("/__bin", {"id": cid})
+
+    for legacy in (False, True):
+        unit = fresh()
+        cid = propose(unit, "Legacy CLI attribution." if legacy else "Named CLI attribution.")
+        if legacy:
+            state = json.loads((side / "comments.json").read_text())
+            next(c for c in state if c["id"] == cid)["proposal"].pop("author", None)
+            (side / "comments.json").write_text(json.dumps(state))
+        cli = subprocess.run([sys.executable, str(ROOT / "server.py"), str(target),
+                              "--approve", cid, "--author", "Julia"], capture_output=True, text=True)
+        label = "legacy" if legacy else "named"
+        check(f"{label} CLI approval succeeds", cli.returncode == 0, cli.stdout.strip())
+        expected_author = "unknown agent" if legacy else "Codex"
+        row = records()[-1] if records() else {}
+        check(f"{label} CLI log records proposer and approver",
+              row.get("author") == expected_author and row.get("approved_by") == "Julia"
+              and f" - {expected_author} - approved by Julia - " in (side / "edits.md").read_text())
+        event = approved_event(cid)
+        check(f"{label} CLI inbox distinguishes actor and proposer",
+              event.get("author") == "Julia" and event.get("proposer") == expected_author)
+        call("/")
+
+    # Legacy HTTP approval independently exercises the other fallback call site.
+    unit = fresh()
+    cid = propose(unit, "Legacy HTTP attribution.")
+    state = json.loads((side / "comments.json").read_text())
+    next(c for c in state if c["id"] == cid)["proposal"].pop("author", None)
+    (side / "comments.json").write_text(json.dumps(state))
+    result = call("/__approve", {"id": cid})
+    check("legacy HTTP approval never guesses an agent name",
+          result.get("ok") and records()[-1].get("author") == "unknown agent"
+          and approved_event(cid).get("proposer") == "unknown agent")
+    hostile = '</script><img src=x onerror="window.attributionAttack=1">'
+    unit = current("Legacy HTTP attribution.")
+    result = call("/__edit", {"id": unit["id"], "text": "Hostile author label text.",
+                               "author": hostile})
+    page = call("/")
+    payload = re.search(r"window\.__RV__=(\{.*?\});</script>", page, re.S).group(1)
+    config = json.loads(payload)
+    check("hostile author round-trips as a label in served attribution state",
+          result.get("ok") and config.get("attribution", {}).get(current("Hostile author label text.")["id"])
+          == {"author": hostile, "approved_by": None})
+    check("hostile author cannot close the injected configuration script",
+          hostile not in page and "<" not in payload)
+    attribution = call("/__attribution")
+    with (side / "edits.jsonl").open("a") as f:
+        f.write('not valid json\n[]\n{"after": "Legacy HTTP attribution.", "author": 3}\n')
+    check("damaged machine records do not hide valid attribution",
+          call("/__attribution") == attribution and bool(attribution))
+
+
 def main():
     # An unresolvable fixture is a named failure, never a stack trace at shutil.copy
     # and never a silent skip. Eleven units verify with this suite.
@@ -1262,6 +1426,8 @@ def main():
                 lk_proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 lk_proc.kill()
+
+        attribution_checks(target, check)
 
     finally:
         proc.terminate()

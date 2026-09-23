@@ -71,7 +71,7 @@ silently accepts an edit it cannot save is worse than one that says no.
 1. `watch.py <file> --as <name> --since <cursor>` blocks until something happens
 2. read the returned `comment` or `edit` events
 3. read `.review/<name>/comments.json` for the full thread
-4. `POST /__propose {id, unit, text, note}`
+4. `POST /__propose {id, unit, text, note, author}`, with the same name as `--as`
 5. run `watch.py` again with the new cursor
 
 Events go to stdout, one JSON object per line, exactly as the server wrote them. The cursor
@@ -86,9 +86,17 @@ Everything sits in `.review/<name>/` beside the document. Add `.review/` to your
 
 | File | Holds |
 |---|---|
-| `edits.md` | Every change, before and after, with an author |
+| `edits.md` | Every change, before and after, with who proposed it and, for an agent's proposal, who approved it |
+| `edits.jsonl` | The same record, one JSON object per change. The page reads it to show who last changed each block |
 | `comments.json` | Threads, proposals, statuses |
 | `inbox.jsonl` | Append-only event stream. Point a file watcher at it |
+
+## Who changed what
+
+Hovering a block shows who changed it last. The server matches the block's current HTML
+against the newest record in `edits.jsonl` whose `after` text is identical, rather than
+against its region id, which changes whenever the text does. Two blocks with identical
+content share a label, and a block changed outside stet matches nothing and shows no label.
 
 ## Server lifecycle
 

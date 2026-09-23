@@ -122,6 +122,7 @@ class Store:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.comments = self.dir / "comments.json"
         self.edits = self.dir / "edits.md"
+        self.edit_records = self.dir / "edits.jsonl"
         self.inbox = self.dir / "inbox.jsonl"
         self._seen = None          # fingerprint as of the last read we served
         self.note_state()
@@ -181,7 +182,7 @@ class Store:
     def units(self):
         return self.read()[1]
 
-    def apply_edit(self, unit_id, new_inner, author):
+    def apply_edit(self, unit_id, new_inner, author, approved_by=None):
         # R7.1 before anything else: if the bytes moved under us, nothing below
         # is computed against the file we are about to write to.
         self.check_unchanged()
@@ -212,19 +213,51 @@ class Store:
 
         self.target.write_text(html_doc.write(text, units, unit_id, new_inner))
         self.note_state()          # our own write is not an external change
-        self.log_edit(unit_id, unit.tag, before, new_inner, author)
+        self.log_edit(unit_id, unit.tag, before, new_inner, author, approved_by)
         return True
 
-    def log_edit(self, unit_id, tag, before, after, author):
+    def log_edit(self, unit_id, tag, before, after, author, approved_by=None):
+        timestamp = iso()
+        approval = f" - approved by {approved_by}" if approved_by is not None else ""
         new = not self.edits.exists()
         with self.edits.open("a") as f:
             if new:
                 f.write(f"# Edits - {self.target.name}\n\n"
                         "Newest last. The artefact itself is the source of truth; "
                         "this is the audit trail of who changed what.\n\n")
-            f.write(f"## {now()} - {author} - {unit_id} <{tag}>\n\n"
+            f.write(f"## {timestamp} - {author}{approval} - {unit_id} <{tag}>\n\n"
                     f"**before**\n```\n{before}\n```\n\n"
                     f"**after**\n```\n{after}\n```\n\n")
+        with self.edit_records.open("a") as f:
+            f.write(json.dumps({"time": timestamp, "unit": unit_id, "tag": tag,
+                                "author": author, "approved_by": approved_by,
+                                "before": before, "after": after}) + "\n")
+
+    def attribution(self, text, units):
+        """Match raw content, never stale ids; append order breaks timestamp ties.
+
+        Identical regions share attribution. Old Markdown logs are not guessed
+        at, and a damaged record is skipped rather than blocking document review.
+        """
+        latest = {}
+        if self.edit_records.exists():
+            with self.edit_records.open() as f:
+                for line in f:
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if (not isinstance(record, dict)
+                            or not isinstance(record.get("after"), str)
+                            or not isinstance(record.get("author"), str)
+                            or "approved_by" not in record
+                            or (record["approved_by"] is not None
+                                and not isinstance(record["approved_by"], str))):
+                        continue
+                    latest[record["after"]] = {
+                        "author": record["author"], "approved_by": record["approved_by"]}
+        return {u.id: latest[u.raw(text)] for u in units
+                if u.editable and u.raw(text) in latest}
 
     # --- comments ---
     def load(self):
@@ -282,6 +315,8 @@ def inject(text, units, locked_ids, cfg, nonce):
         out = out[:insert_at] + attrs + out[insert_at:]
 
     payload = json.dumps({"units": meta, "locked": sorted(locked_ids), **cfg})
+    # Labels and raw content are data, including a literal closing script tag.
+    payload = payload.replace("<", "\\u003c")
     # R1.5: only the review layer's own tags carry the nonce. Document script,
     # inline or sibling, carries none and does not run. The tag holding the
     # session token is nonced for exactly this reason - a same-origin sibling
@@ -372,6 +407,10 @@ class Handler(BaseHTTPRequestHandler):
             text = st.text()
             return self._json([u.to_json(text) for u in st.units()])
 
+        if path == "/__attribution":
+            text, units, _ = st.read()
+            return self._json(st.attribution(text, units))
+
         if path in ("/", "/index.html"):
             # R1.4 / A10: a document that cannot be read properly is served
             # READ-ONLY with the reason, never silently as a handful of regions
@@ -390,6 +429,7 @@ class Handler(BaseHTTPRequestHandler):
             page = inject(text, units, locked, {
                 "author": self.author, "name": st.target.name,
                 "token": SESSION_TOKEN, "scriptsDisabled": True,
+                "attribution": st.attribution(text, units),
                 "readOnly": bool(problems),
                 "readOnlyReason": problems[0] if problems else ""}, nonce)
             return self._send(200, page, extra={"Content-Security-Policy": csp})
@@ -520,6 +560,7 @@ class Handler(BaseHTTPRequestHandler):
                     409)
 
             c["proposal"] = {"unit": unit_id,
+                             "author": who,
                              "text": data.get("text", ""),
                              "note": data.get("note", ""),
                              "anchor": anchor}
@@ -582,7 +623,8 @@ class Handler(BaseHTTPRequestHandler):
             # the locked check and payload validation both still fire.
             landed = hits[0]
             try:
-                st.apply_edit(landed.id, pr["text"], "Claude (approved)")
+                st.apply_edit(landed.id, pr["text"],
+                              pr.get("author") or "unknown agent", approved_by=who)
             except ExternalChange as e:
                 return self._json({"ok": False, "status": "changed-underneath",
                                    "error": str(e)}, 409)
@@ -591,7 +633,8 @@ class Handler(BaseHTTPRequestHandler):
                                    "error": str(e)}, 400)
             c["status"] = "applied"
             c["resolved"] = pr.get("note", "")
-            st.append_inbox("approved", who, id=c["id"], unit=landed.id)
+            st.append_inbox("approved", who, id=c["id"], unit=landed.id,
+                            proposer=pr.get("author") or "unknown agent")
 
         elif p == "/__reject":
             c["status"] = "open"
@@ -717,14 +760,16 @@ def main():
                   f"({', '.join(u.id for u in hits)})")
             sys.exit(1)
         try:
-            store.apply_edit(hits[0].id, pr["text"], "Claude (approved)")
+            store.apply_edit(hits[0].id, pr["text"],
+                             pr.get("author") or "unknown agent", approved_by=author)
         except (KeyError, ValueError) as e:
             print(f"{cid}: {e}")
             sys.exit(1)
         # KTD7: this verb writes to the file, so it belongs in the stream. It
         # recorded nothing before, which made "the stream is the record" false
         # for the one path that runs without a browser.
-        store.append_inbox("approved", author, id=cid, unit=hits[0].id, via="cli")
+        store.append_inbox("approved", author, id=cid, unit=hits[0].id, via="cli",
+                           proposer=pr.get("author") or "unknown agent")
         c["status"] = "applied"
         store.save(comments)
         print(f"{cid} applied to {pr['unit']}")
