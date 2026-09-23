@@ -698,6 +698,12 @@ def _selftest():
             result = hat.api("/__approve", {"id": cid, "author": "Julia"})
             check("l. attributed proposal applied", result.get("ok"), str(result))
             hat.reload()
+            hat.page.wait_for_selector(".rv-done-note", timeout=3000)
+            check("l. the applied card says Applied",
+                  hat.page.locator(".rv-done-note").first.inner_text() == "Applied",
+                  repr(hat.page.locator(".rv-done-note").first.inner_text()))
+            check("l. and offers no Approve button to click again",
+                  hat.page.locator('button[data-a="approve"]').count() == 0)
             approved_sel = '[data-rv-id][data-rv-attribution]'
             approved = hat.page.locator(approved_sel).filter(has_text="BROWSER ATTRIBUTION APPROVED")
             check("l. approved region carries attribution after its id changed", approved.count() == 1)

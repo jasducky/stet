@@ -570,6 +570,12 @@ class Handler(BaseHTTPRequestHandler):
             pr = c.get("proposal")
             if not pr:
                 return self._json({"ok": False, "error": "nothing proposed"}, 400)
+            # An applied proposal stays on its thread as the record of what
+            # landed. Approving it again used to re-run the write as a no-op
+            # and log another `approved` event per click.
+            if c.get("status") == "applied":
+                return self._json({"ok": False, "status": "already-applied",
+                                   "error": "this proposal has already been applied"}, 409)
 
             # R3.5. Re-placing updates the anchor and then re-attempts the apply
             # down the SAME path as an ordinary approval, so the two can never
@@ -741,6 +747,9 @@ def main():
         pr = (c or {}).get("proposal")
         if not pr:
             print(f"{cid}: nothing proposed")
+            sys.exit(1)
+        if c.get("status") == "applied":
+            print(f"{cid}: already applied")
             sys.exit(1)
         # R3.7: the CLI verb resolves the anchor exactly as the browser does,
         # or the two doors disagree about where a proposal lands.

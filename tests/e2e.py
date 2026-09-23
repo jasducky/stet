@@ -344,6 +344,13 @@ def main():
         check("proposed text now in the file", "A SHARPER LINE" in target.read_text())
         state = {x["id"]: x for x in call("/__comments")}
         check("status now applied", state[cid]["status"] == "applied")
+        inbox_file = TMP / ".review" / target.stem / "inbox.jsonl"
+        approved_before = inbox_file.read_text().count('"type": "approved"')
+        again = call("/__approve", {"id": cid})
+        check("approving an applied proposal again is refused",
+              not again.get("ok") and again.get("status") == "already-applied", str(again))
+        check("and logs no second approval",
+              inbox_file.read_text().count('"type": "approved"') == approved_before)
 
         print("\n4. the approval gate actually gates")
         c2 = call("/__comment", {"unit": units[8]["id"], "quote": "", "comment": "x"})
