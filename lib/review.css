@@ -77,7 +77,10 @@
 #rv-attribution {
   color: #9aa3ad; padding: 4px 8px; align-self: center;
   font: 11px/1.4 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
-  max-width: min(360px, 50vw); overflow-wrap: anywhere;
+  max-width: min(360px, 50vw);
+  /* One line, always. The toolbar sits just above the region, so a label that
+     wraps grows the toolbar downward over the very text being hovered. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #rv-attribution[hidden] { display: none; }
 .rv-tools .rv-lock { display: none; color: #f0c674; font: 11px ui-sans-serif, sans-serif; padding: 4px 8px; align-items: center; }
