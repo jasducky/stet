@@ -16,6 +16,7 @@ documents: a report, a one-pager, a mock, a brief. They look good and they are n
 
 You want to finish the document together: fix a few sentences yourself, ask the agent to
 rework others, and keep the paragraphs you were already happy with exactly as they are.
+The finished document is shared work, with a record of who wrote which part.
 
 ## The problem
 
