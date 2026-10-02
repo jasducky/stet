@@ -34,16 +34,17 @@ waiting for your yes.
 ## What stet gives you
 
 - **You type straight into the document.** It opens in your browser looking exactly as it was
-  built. Click a block (a paragraph, heading, list item or table cell), retype it and press
-  Save, and that block is written back into the real file.
+  built. Double-click where you want to change something (in a paragraph, heading, list item or
+  table cell) and type, then click away and that block is written back into the real file.
 - **Only your sentence changes.** The rest of the file stays byte for byte as it was, so nothing
   is reformatted and a git diff shows exactly what you changed.
 - **The agent proposes, you decide.** Leave a comment and the agent answers with a rewrite,
   shown beside the text. You approve it or send it back, and until you approve, the file stays
   as it is.
-- **You can see who changed what.** Hover over a block and it shows who changed it last, for
-  example *Last changed by Codex, approved by Julia*. Every change is also logged with before,
-  after, who proposed it and who approved it, in a `.review/` folder beside the document.
+- **You can see who changed what.** Switch to the *Who changed what* view and every changed
+  block is labelled in the margin, for example *Codex, approved by Julia*. Every change is
+  also logged with before, after, who proposed it and who approved it, in a `.review/` folder
+  beside the document.
 
 ---
 
@@ -59,9 +60,9 @@ python3 server.py examples/quarterly-note.html
 
 Open the address it prints (`http://localhost:8790/` by default).
 
-1. Click any paragraph, change a word and press Save. Run `git diff` in the `stet` folder:
-   only that paragraph changed.
-2. Select some text and leave a comment.
+1. Double-click any paragraph, change a word and click away. Run `git diff` in the `stet`
+   folder: only that paragraph changed.
+2. Highlight some text, click **Comment** and write a note.
 3. To have your agent answer it, set up the agent as described in the next section.
 
 To use it on your own document, point it at that file instead, and add `.review/` to that
@@ -104,7 +105,7 @@ Then run watch.py again with the new cursor.
 
 Change `~/stet` to wherever you cloned it, and the port if you started the server with `--port`.
 Keep `author` the same as the name after `--as`, because that name is what the page shows
-when you hover over a block the agent changed.
+beside a block the agent changed.
 
 **What the agent does on each turn:**
 
@@ -162,6 +163,7 @@ the mature choice.
   `--author` is your name as it appears in the record, and `--detach` keeps the server running
   after the command that started it ends, which is what an agent needs.
 - **How it works, and the tests:** [docs/how-it-works.md](docs/how-it-works.md)
+- **What changed in each version:** [CHANGELOG.md](CHANGELOG.md)
 - **Exact behaviour:** [SPEC.md](SPEC.md)
 - **The name:** *stet* is the proofreader's mark meaning *let it stand*, the note an editor writes
   to say *leave my words as they are*.

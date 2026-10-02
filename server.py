@@ -105,6 +105,13 @@ def iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+__version__ = "0.2.0"   # see CHANGELOG.md
+
+# A <script> element or an inline event handler (onclick= and the like): the
+# two kinds of document script the served policy blocks.
+HAS_SCRIPT = re.compile(r"<script\b|\son[a-z]+\s*=", re.I)
+
+
 class ExternalChange(RuntimeError):
     """The file changed on disk since the server last read it.
 
@@ -428,7 +435,11 @@ class Handler(BaseHTTPRequestHandler):
                    "base-uri 'none'")
             page = inject(text, units, locked, {
                 "author": self.author, "name": st.target.name,
-                "token": SESSION_TOKEN, "scriptsDisabled": True,
+                "token": SESSION_TOKEN, "version": __version__,
+                # The policy is always on; the notice only shows when the
+                # document carries script it would otherwise run, so a plain
+                # document is not warned about nothing.
+                "scriptsDisabled": bool(HAS_SCRIPT.search(text)),
                 "attribution": st.attribution(text, units),
                 "readOnly": bool(problems),
                 "readOnlyReason": problems[0] if problems else ""}, nonce)

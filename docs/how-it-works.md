@@ -63,7 +63,7 @@ Regions never nest, so two edits can never overlap.
 If a document assembles content in JavaScript and injects it with `innerHTML`, that text does
 not exist in the file, so an edit to it could not be saved.
 
-Those regions are detected and marked **comment-only**, visibly, in the toolbar. A tool that
+Those regions are detected and marked **comment-only**, visibly, on the page. A tool that
 silently accepts an edit it cannot save is worse than one that says no.
 
 ## The agent protocol
@@ -93,7 +93,7 @@ Everything sits in `.review/<name>/` beside the document. Add `.review/` to your
 
 ## Who changed what
 
-Hovering a block shows who changed it last. The server matches the block's current HTML
+The *Who changed what* view, and hovering a block, show who changed it last. The server matches the block's current HTML
 against the newest record in `edits.jsonl` whose `after` text is identical, rather than
 against its region id, which changes whenever the text does. Two blocks with identical
 content share a label, and a block changed outside stet matches nothing and shows no label.

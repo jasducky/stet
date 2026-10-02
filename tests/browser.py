@@ -226,15 +226,13 @@ class Harness:
         return state
 
     def type_into(self, rid, text, save=True):
-        """Drive a real edit: hover the region, click Edit, type, Save.
+        """Drive a real edit: double-click the region, type, click away to save.
 
         Goes through the page's own affordances rather than posting to /__edit,
         because what is under test is the rendered layer, not the endpoint.
         """
         sel = f'[data-rv-id="{rid}"]'
-        self.page.hover(sel)
-        self.page.wait_for_selector(".rv-tools.rv-show", timeout=3000)
-        self.page.click('.rv-tools [data-a="edit"]')
+        self.page.dblclick(sel)
         self.page.wait_for_selector(f"{sel}[contenteditable='true']", timeout=3000)
 
         self.page.evaluate(
@@ -249,8 +247,18 @@ class Harness:
         self.page.keyboard.type(text)
 
         if save:
-            self.page.click('.rv-editbar [data-a="save"]')
-            self.page.wait_for_selector(".rv-editbar", state="detached", timeout=5000)
+            # There is no Save button: leaving the block saves it. The block
+            # stops being editable once the server has accepted the write.
+            self.page.evaluate(
+                "(rid) => document.querySelector(`[data-rv-id=\"${rid}\"]`).blur()", rid)
+            self.page.wait_for_function(
+                "(rid) => { const n = document.querySelector(`[data-rv-id=\"${rid}\"]`);"
+                " return !n || !n.isContentEditable; }", arg=rid, timeout=5000)
+            # A saved block reloads the page a moment later (so the block gets
+            # its new id); wait for that reload to land before going on.
+            self.page.wait_for_timeout(900)
+            self.page.wait_for_load_state("load")
+            self.page.wait_for_selector(".rv-bar", timeout=5000)
         return self
 
     def select_text(self, rid, start, end):
@@ -655,29 +663,18 @@ def _selftest():
             print("\n5k. R2.7 - typed content survives a refused write (A16)")
             rid = hr.region_ids(editable_only=True, min_text=60)[1]
             sel = f'[data-rv-id="{rid}"]'
-            hr.page.hover(sel)
-            hr.page.wait_for_selector(".rv-tools.rv-show", timeout=3000)
-            hr.page.click('.rv-tools [data-a="edit"]')
-            hr.page.wait_for_selector(f"{sel}[contenteditable='true']", timeout=3000)
-            # type something the validator will refuse
-            hr.page.evaluate(
-                """(rid) => {
-                    const n = document.querySelector(`[data-rv-id="${rid}"]`);
-                    n.focus();
-                    const r = document.createRange(); r.selectNodeContents(n);
-                    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
-                }""", rid)
             # Typing angle brackets into a contenteditable produces escaped TEXT,
             # not markup - correct behaviour, and nothing for the validator to
-            # refuse. The raw-HTML editor is the real path where a person types
-            # something a write can reject, so the refusal is produced there.
-            hr.page.click('.rv-editbar [data-a="raw"]')
+            # refuse. The raw-HTML editor (Shift + double-click) is the real path
+            # where a person types something a write can reject.
+            hr.page.dblclick(sel, modifiers=["Shift"])
             hr.page.wait_for_selector(".rv-raw", timeout=3000)
             hr.page.fill(".rv-raw", "my careful rewrite <iframe src=x></iframe>")
             before_k = hr.file_on_disk()
-            hr.page.click('.rv-editbar [data-a="save"]')
+            hr.page.keyboard.press("Control+Enter")
             hr.page.wait_for_timeout(600)
-            check("k. the write was refused", hr.page.is_visible(".rv-editbar"))
+            check("k. the write was refused, and the box stays open",
+                  hr.page.is_visible(".rv-raw"))
             check("k. and nothing reached the file", hr.file_on_disk() == before_k)
             check("k. the reason is shown", "Not saved" in hr.status_text(),
                   hr.status_text()[:80])
@@ -749,6 +746,10 @@ def _selftest():
             check("l. hover attribution never enters the target file",
                   b"data-rv-attribution" not in hat.file_on_disk()
                   and b"Last changed by" not in hat.file_on_disk())
+
+        # 8. the reading and editing experience, each on its own fresh server
+        from reader_checks import run as reader_checks
+        reader_checks(check, Harness)
 
         print("\n6. panel_text is a distinct surface")
         panel = h.panel_text()
