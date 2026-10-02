@@ -86,7 +86,7 @@ def _who_has(port):
 # checked before the request body is read at all.
 BROWSER_ONLY = frozenset({
     "/__edit", "/__comment", "/__reply", "/__approve",
-    "/__reject", "/__resolve", "/__delete", "/__replace", "/__bin",
+    "/__reject", "/__resolve", "/__delete", "/__replace", "/__bin", "/__rate",
 })
 
 # Agent-reachable: /__propose only. The agent posts from a shell with no browser,
@@ -105,7 +105,7 @@ def iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-__version__ = "0.2.0"   # see CHANGELOG.md
+__version__ = "0.3.0"   # see CHANGELOG.md
 
 # A <script> element or an inline event handler (onclick= and the like): the
 # two kinds of document script the served policy blocks.
@@ -570,12 +570,21 @@ class Handler(BaseHTTPRequestHandler):
                               f"longer in the document, and no anchor text was given"},
                     409)
 
+            replaced = c.get("status") == "proposed" and bool(c.get("proposal"))
             c["proposal"] = {"unit": unit_id,
                              "author": who,
                              "text": data.get("text", ""),
                              "note": data.get("note", ""),
                              "anchor": anchor}
             c["status"] = "proposed"
+            # Every proposal is kept, not only the live one, so a session can be
+            # reviewed afterwards: what was proposed, in what order, and which
+            # proposals were replaced before the human ever saw them.
+            c.setdefault("proposal_history", []).append(
+                dict(c["proposal"], time=now(), replaced_previous=replaced))
+            st.append_inbox("proposed", who, id=c["id"], unit=unit_id,
+                            text=data.get("text", ""), note=data.get("note", ""),
+                            replaced_previous=replaced)
 
         elif p in ("/__approve", "/__replace"):
             pr = c.get("proposal")
@@ -671,6 +680,19 @@ class Handler(BaseHTTPRequestHandler):
             c["status"] = "open"
             st.append_inbox("binned", who, id=c["id"],
                             anchor=(had or {}).get("anchor", "")[:200])
+
+        elif p == "/__rate":
+            # The human's own verdict on one answer: did the agent do what the
+            # comment asked? Optional, and separate from approving, because a
+            # proposal can be approved and still miss part of the ask.
+            value = data.get("value")
+            if value not in ("up", "down"):
+                return self._json({"ok": False, "error": "value must be up or down"}, 400)
+            if not c.get("proposal") and not c.get("proposal_history"):
+                return self._json({"ok": False, "error": "nothing to rate yet"}, 400)
+            c["rating"] = {"value": value, "note": str(data.get("note") or "")[:2000],
+                           "by": who, "time": now()}
+            st.append_inbox("rated", who, id=c["id"], value=value, note=c["rating"]["note"])
 
         elif p == "/__resolve":
             c["status"] = "applied"

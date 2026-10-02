@@ -77,8 +77,8 @@ silently accepts an edit it cannot save is worse than one that says no.
 Events go to stdout, one JSON object per line, exactly as the server wrote them. The cursor
 comes back on stderr and stays valid across a server restart.
 
-`/__propose` is the only write endpoint an agent can reach. Editing, approving and rejecting
-need a token that only the served page holds.
+`/__propose` is the only write endpoint an agent can reach. Editing, approving, rejecting and
+rating need a token that only the served page holds.
 
 ## Files it writes
 
@@ -88,7 +88,7 @@ Everything sits in `.review/<name>/` beside the document. Add `.review/` to your
 |---|---|
 | `edits.md` | Every change, before and after, with who proposed it and, for an agent's proposal, who approved it |
 | `edits.jsonl` | The same record, one JSON object per change. The page reads it to show who last changed each block |
-| `comments.json` | Threads, proposals, statuses |
+| `comments.json` | Threads, statuses, the live proposal, every proposal in order (`proposal_history`) and the person's rating of the answer (`rating`: did it do what the comment asked, `up` or `down`, with an optional note) |
 | `inbox.jsonl` | Append-only event stream. Point a file watcher at it |
 
 ## Who changed what

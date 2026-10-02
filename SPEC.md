@@ -449,7 +449,9 @@ surface; see *The agent's turn* below for the loop that defines it.
 > recorded in `edits.md`, so it is not untracked, but no watcher, audit pass or reconnecting agent
 > can learn of it from the stream. Fixing only `/__reply` leaves this in place.
 
-**Event types**, all already emitted: `comment`, `edit`, `reply`, `approved`, `rejected`.
+**Event types**, all already emitted: `comment`, `edit`, `reply`, `approved`, `rejected`, and since
+0.3.0 `proposed` (every proposal, with its text, note and whether it replaced a live one) and
+`rated` (the person's verdict on an answer, `up` or `down`, through the browser-only `/__rate`).
 An `approved` event keeps the approver as `author` and includes the proposal's author as
 `proposer` (or `unknown agent` for a legacy proposal), including approvals through the CLI.
 

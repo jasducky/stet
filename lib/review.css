@@ -316,3 +316,12 @@ body.rv-on > :not([class^="rv-"]):not([id^="rv-"]) { zoom: var(--rv-doc-zoom); }
 /* a refused save stays open and says so, so nothing typed is lost */
 [data-rv-id].rv-unsaved { outline: 2px solid #c0392b !important; outline-offset: 3px; }
 .rv-set-version { margin: 10px 0 0; font-size: 12px; color: #9aa3ad; }
+
+/* did it do what you asked? */
+.rv-rate { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; color: #4d5761; }
+.rv-rate button { border: 1px solid #cbd3da; background: #fff; border-radius: 6px; padding: 3px 7px; cursor: pointer; color: #4d5761; line-height: 0; }
+.rv-rate button .rv-icon { margin: 0; }
+.rv-rate button:hover { background: #eef2f5; }
+.rv-rate button.rv-rate-on { background: #1d7a5f; border-color: #1d7a5f; color: #fff; }
+.rv-rate button.rv-rate-on.rv-rate-down { background: #c0392b; border-color: #c0392b; }
+.rv-rate-note { flex: 1 1 100%; font: 13px ui-sans-serif, -apple-system, sans-serif; padding: 6px 8px; border: 1px solid #cbd3da; border-radius: 5px; }

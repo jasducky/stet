@@ -10,7 +10,7 @@ who-changed-what view, and plain words in the comment dialog. Every block
 also checks that nothing stet draws on screen is written into the file.
 """
 
-MIDPOINT = """id => {
+MIDPOINT = r"""id => {
     const n = document.querySelector(`[data-rv-id="${id}"]`);
     const w = document.createTreeWalker(n, NodeFilter.SHOW_TEXT); const t = w.nextNode();
     const i = t.nodeValue.indexOf(' ', Math.floor(t.nodeValue.length / 2)) + 1;
@@ -228,3 +228,40 @@ def run(check, Harness):
         check("g. the whole-document comment lives in the sidebar",
               h.page.inner_text(".rv-card h4") == "Comment on the whole document"
               and h.page.locator(".rv-side #rv-page-comment").count() == 1)
+
+    print("\n8h. every proposal is kept, and the human can say if it did what was asked")
+    with Harness() as h:
+        import json as _json, urllib.request as _ur, urllib.error as _ue
+        ids = h.region_ids(editable_only=True, min_text=60)
+        cid = h.api("/__comment", {"unit": ids[0], "quote": "", "comment": "two things please"})["id"]
+        h.api("/__propose", {"id": cid, "unit": ids[0], "text": "FIRST ANSWER", "note": "part one", "author": "Claude"})
+        h.api("/__propose", {"id": cid, "unit": ids[0], "text": "SECOND ANSWER", "note": "part two", "author": "Claude"})
+        state = {c["id"]: c for c in h.api("/__comments")}[cid]
+        hist = state.get("proposal_history", [])
+        check("h. both proposals are kept in the history, in order",
+              [x["text"] for x in hist] == ["FIRST ANSWER", "SECOND ANSWER"], str([x.get("text") for x in hist]))
+        check("h. the history says the second replaced the first",
+              len(hist) == 2 and hist[1]["replaced_previous"] is True and hist[0]["replaced_previous"] is False)
+        inbox = [_json.loads(l) for l in (h.target.parent / ".review" / h.target.stem / "inbox.jsonl").read_text().splitlines()]
+        check("h. each proposal is an event in the log",
+              [e["text"] for e in inbox if e["type"] == "proposed"] == ["FIRST ANSWER", "SECOND ANSWER"])
+        h.api("/__approve", {"id": cid})
+        h.reload(); h.page.wait_for_selector(".rv-rate")
+        check("h. an answered comment asks 'did it do what you asked?'",
+              "Did it do what you asked?" in h.page.inner_text(".rv-rate"))
+        h.page.click('.rv-rate [data-a="rate-down"]'); h.page.wait_for_timeout(500)
+        h.page.wait_for_selector(".rv-rate-note")
+        h.page.fill(".rv-rate-note", "only did half"); h.page.keyboard.press("Enter"); h.page.wait_for_timeout(500)
+        state = {c["id"]: c for c in h.api("/__comments")}[cid]
+        check("h. the verdict and note are saved on the comment",
+              state.get("rating", {}).get("value") == "down" and state["rating"].get("note") == "only did half", str(state.get("rating")))
+        inbox = [_json.loads(l) for l in (h.target.parent / ".review" / h.target.stem / "inbox.jsonl").read_text().splitlines()]
+        check("h. and logged as events", [e.get("value") for e in inbox if e["type"] == "rated"] == ["down", "down"])
+        req = _ur.Request(h.base + "/__rate", data=_json.dumps({"id": cid, "value": "up"}).encode(),
+                          headers={"Content-Type": "application/json"})
+        try:
+            _ur.urlopen(req); refused = False
+        except _ue.HTTPError as e:
+            refused = e.code in (401, 403)
+        check("h. an agent cannot rate its own work (no browser, no token)", refused)
+        clean(h, "h")

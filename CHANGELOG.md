@@ -3,6 +3,16 @@
 What changed in each version of stet, newest first. The version number is shown at the
 bottom of the Settings panel.
 
+## 0.3.0 (2 October 2026)
+
+Each review can now be looked back on, to see whether the agent did what each comment asked.
+
+- Every proposal is kept in order, including any the agent replaced before you saw it, and each
+  one is an event in the log.
+- An answered comment asks *Did it do what you asked?*, with a thumbs up or down and room for a
+  few words. It is optional and separate from approving, because an approved change can still
+  miss part of the ask. Only the person at the page can answer it, never the agent.
+
 ## 0.2.0 (2 October 2026)
 
 You now edit by double-clicking and save by clicking away, comments are marked on the page
